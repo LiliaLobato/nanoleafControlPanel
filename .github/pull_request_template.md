@@ -2,6 +2,8 @@
 
 ## Linked Issue
 
+*Not applicable if there is no issue to link to — delete this section.*
+
 Closes #
 
 ## Description
