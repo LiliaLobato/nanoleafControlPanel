@@ -2,5 +2,6 @@ __pycache__/
 *.py[codz]
 *$py.class
 
-*.txt
+*.log
+*.tmp
 .env
