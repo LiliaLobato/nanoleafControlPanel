@@ -1,0 +1,31 @@
+{
+  "coord": {"lon": -122.1923, "lat": 47.6144},
+  "weather": [{"id": 601, "main": "Snow", "description": "snow", "icon": "13d"}],
+  "base": "stations",
+  "main": {
+    "temp": -1.2,
+    "feels_like": -5.0,
+    "temp_min": -3.0,
+    "temp_max": 0.5,
+    "pressure": 1010,
+    "humidity": 92,
+    "sea_level": 1010,
+    "grnd_level": 1007
+  },
+  "visibility": 1000,
+  "wind": {"speed": 4.1, "deg": 350, "gust": 7.0},
+  "clouds": {"all": 100},
+  "snow": {"1h": 1.5},
+  "dt": 1750536000,
+  "sys": {
+    "type": 2,
+    "id": 2041694,
+    "country": "US",
+    "sunrise": 1750504260,
+    "sunset": 1750561860
+  },
+  "timezone": -25200,
+  "id": 5786882,
+  "name": "Bellevue",
+  "cod": 200
+}

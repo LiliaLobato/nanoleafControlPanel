@@ -1,0 +1,30 @@
+{
+  "coord": {"lon": -122.1923, "lat": 47.6144},
+  "weather": [{"id": 802, "main": "Clouds", "description": "scattered clouds", "icon": "03d"}],
+  "base": "stations",
+  "main": {
+    "temp": 18.0,
+    "feels_like": 17.5,
+    "temp_min": 15.0,
+    "temp_max": 20.0,
+    "pressure": 1015,
+    "humidity": 55,
+    "sea_level": 1015,
+    "grnd_level": 1012
+  },
+  "visibility": 10000,
+  "wind": {"speed": 3.0, "deg": 250, "gust": 4.5},
+  "clouds": {"all": 40},
+  "dt": 1750536000,
+  "sys": {
+    "type": 2,
+    "id": 2041694,
+    "country": "US",
+    "sunrise": 1750504260,
+    "sunset": 1750561860
+  },
+  "timezone": -25200,
+  "id": 5786882,
+  "name": "Bellevue",
+  "cod": 200
+}

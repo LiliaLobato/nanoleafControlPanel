@@ -6,7 +6,13 @@ I been using the __Nanoleaf API__: https://forum.nanoleaf.me/docs/openapi for ab
 
 
 ## Expected final product
-- Script to turn on/off a device based on the local sunset and my sleep time :zzz: (Ideally it should gradually turn on and off)
+Fully automate the Nanoleaf light using cronJobs in a Rasphberry Pi.
+- Script to turn on/off a device based on the local sunset/sundown and my sleep pattern :zzz: (Ideally it should gradually turn on and off).
+  - When the day is cloudy, or raining it should start lights earlier.
+  - The night light should have a warm hue tone with red undertones, cozy vibes.
+  - The morning light should have a cold hue tone with blue undertones, wake me up energy vibes.
+  - The sleep time should be configurable with default value 10:30pm and hard cutoff at 11pm
+  - The wake up time should be configurable but the lights should be all up at 7am as default.
 - Script to handle power consumption on large nanoleaf setups.
 - Control panel to interact with the basic setup (change color, brightness, hue, etc) using an [esp32 cheap yellow display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display).
 

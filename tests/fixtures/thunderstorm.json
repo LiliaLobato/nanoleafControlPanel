@@ -1,0 +1,31 @@
+{
+  "coord": {"lon": -122.1923, "lat": 47.6144},
+  "weather": [{"id": 211, "main": "Thunderstorm", "description": "thunderstorm", "icon": "11d"}],
+  "base": "stations",
+  "main": {
+    "temp": 16.0,
+    "feels_like": 15.0,
+    "temp_min": 14.0,
+    "temp_max": 18.0,
+    "pressure": 1002,
+    "humidity": 85,
+    "sea_level": 1002,
+    "grnd_level": 999
+  },
+  "visibility": 3000,
+  "wind": {"speed": 8.5, "deg": 180, "gust": 14.0},
+  "clouds": {"all": 85},
+  "rain": {"1h": 5.0},
+  "dt": 1750536000,
+  "sys": {
+    "type": 2,
+    "id": 2041694,
+    "country": "US",
+    "sunrise": 1750504260,
+    "sunset": 1750561860
+  },
+  "timezone": -25200,
+  "id": 5786882,
+  "name": "Bellevue",
+  "cod": 200
+}
