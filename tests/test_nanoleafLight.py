@@ -1,7 +1,7 @@
 """Unit tests for nanoleafLight.py — all HTTP calls mocked."""
 
 import json
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests as requests_lib
@@ -17,9 +17,6 @@ from nanoleafLight import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-BASE_URL = "http://192.168.1.100:16021/api/v1/test-token"
-
 
 @pytest.fixture
 def light():
@@ -191,6 +188,18 @@ class TestSetHsb:
         with patch("requests.request", return_value=_mock_response(500)):
             assert light.set_hsb(10, 80, 25) is False
 
+    @pytest.mark.parametrize("hue,sat,brightness", [
+        (361, 50, 50),
+        (-1, 50, 50),
+        (180, 101, 50),
+        (180, -1, 50),
+        (180, 50, 101),
+        (180, 50, -1),
+    ])
+    def test_raises_on_out_of_range(self, light, hue, sat, brightness):
+        with pytest.raises(ValueError):
+            light.set_hsb(hue, sat, brightness)
+
 
 # ---------------------------------------------------------------------------
 # set_color_temp_and_brightness — batched PUT /state
@@ -217,6 +226,16 @@ class TestSetColorTempAndBrightness:
     def test_returns_false_on_connection_error(self, light):
         with patch("requests.request", side_effect=requests_lib.exceptions.ConnectionError()):
             assert light.set_color_temp_and_brightness(6000, 100) is False
+
+    @pytest.mark.parametrize("ct,brightness", [
+        (1199, 50),
+        (6501, 50),
+        (3000, -1),
+        (3000, 101),
+    ])
+    def test_raises_on_out_of_range(self, light, ct, brightness):
+        with pytest.raises(ValueError):
+            light.set_color_temp_and_brightness(ct, brightness)
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +268,15 @@ class TestSetColor:
     def test_returns_false_on_failure(self, light):
         with patch("requests.request", side_effect=requests_lib.exceptions.ConnectionError()):
             assert light.set_color((255, 0, 0)) is False
+
+    @pytest.mark.parametrize("rgb", [
+        (256, 0, 0),
+        (-1, 0, 0),
+        (0, 0, 256),
+    ])
+    def test_raises_on_out_of_range(self, light, rgb):
+        with pytest.raises(ValueError):
+            light.set_color(rgb)
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +336,101 @@ class TestHeartbeat:
 
 
 # ---------------------------------------------------------------------------
-# __error_check (legacy helper, still used by some paths)
+# toggle_power
+# ---------------------------------------------------------------------------
+
+
+class TestTogglePower:
+    def test_turns_off_when_on(self, light):
+        with patch("requests.request", side_effect=[
+            _mock_response(200, json.dumps({"value": True})),   # get_power
+            _mock_response(204),                                 # power_off
+        ]):
+            result = light.toggle_power()
+        assert result is True
+
+    def test_turns_on_when_off(self, light):
+        with patch("requests.request", side_effect=[
+            _mock_response(200, json.dumps({"value": False})),  # get_power
+            _mock_response(204),                                 # power_on
+        ]):
+            result = light.toggle_power()
+        assert result is True
+
+    def test_returns_false_when_power_change_fails(self, light):
+        with patch("requests.request", side_effect=[
+            _mock_response(200, json.dumps({"value": True})),   # get_power succeeds
+            _mock_response(500),                                 # power_off fails
+        ]):
+            result = light.toggle_power()
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Individual single-field setters
+# ---------------------------------------------------------------------------
+
+
+class TestIndividualSetters:
+    def test_set_brightness_sends_correct_body(self, light):
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            assert light.set_brightness(75) is True
+        _, kwargs = mock_req.call_args
+        assert json.loads(kwargs["data"]) == {"brightness": {"value": 75, "duration": 0}}
+
+    def test_set_brightness_raises_on_out_of_range(self, light):
+        with pytest.raises(ValueError):
+            light.set_brightness(101)
+
+    def test_set_brightness_returns_false_on_error(self, light):
+        with patch("requests.request", side_effect=requests_lib.exceptions.ConnectionError()):
+            assert light.set_brightness(50) is False
+
+    def test_set_hue_sends_correct_body(self, light):
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            assert light.set_hue(180) is True
+        _, kwargs = mock_req.call_args
+        assert json.loads(kwargs["data"]) == {"hue": {"value": 180}}
+
+    def test_set_hue_raises_on_out_of_range(self, light):
+        with pytest.raises(ValueError):
+            light.set_hue(361)
+
+    def test_set_hue_returns_false_on_error(self, light):
+        with patch("requests.request", side_effect=requests_lib.exceptions.ConnectionError()):
+            assert light.set_hue(90) is False
+
+    def test_set_saturation_sends_correct_body(self, light):
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            assert light.set_saturation(80) is True
+        _, kwargs = mock_req.call_args
+        assert json.loads(kwargs["data"]) == {"sat": {"value": 80}}
+
+    def test_set_saturation_raises_on_out_of_range(self, light):
+        with pytest.raises(ValueError):
+            light.set_saturation(-1)
+
+    def test_set_saturation_returns_false_on_error(self, light):
+        with patch("requests.request", side_effect=requests_lib.exceptions.ConnectionError()):
+            assert light.set_saturation(50) is False
+
+    def test_set_color_temp_sends_correct_body(self, light):
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            assert light.set_color_temp(4000) is True
+        _, kwargs = mock_req.call_args
+        assert json.loads(kwargs["data"]) == {"ct": {"value": 4000}}
+
+    def test_set_color_temp_raises_on_out_of_range(self, light):
+        with pytest.raises(ValueError):
+            light.set_color_temp(7000)
+
+    def test_set_color_temp_returns_false_on_error(self, light):
+        with patch("requests.request", side_effect=requests_lib.exceptions.ConnectionError()):
+            assert light.set_color_temp(3000) is False
+
+
+# ---------------------------------------------------------------------------
+# __error_check (kept for future use; not called by current public methods)
 # ---------------------------------------------------------------------------
 
 

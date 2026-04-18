@@ -9,8 +9,11 @@ https://github.com/MylesMor/nanoleafapi
 
 import colorsys
 import json
+import logging
 import requests
-from requests.exceptions import ConnectionError, Timeout, RequestException
+
+logger = logging.getLogger(__name__)
+from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout, RequestException
 from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -88,7 +91,7 @@ class nanoleafLight:
         url = self.url + path
         try:
             response = requests.request(method, url, **kwargs)
-        except (ConnectionError, Timeout) as exc:
+        except (RequestsConnectionError, Timeout) as exc:
             raise NanoleafConnectionError(str(exc)) from exc
         except RequestException as exc:
             raise NanoleafConnectionError(str(exc)) from exc
@@ -176,7 +179,8 @@ class nanoleafLight:
             }
         except NanoleafError:
             return {}
-        except (KeyError, ValueError):
+        except (KeyError, ValueError) as exc:
+            logger.warning("get_full_state: unexpected API response shape: %s", exc)
             return {}
 
     # ------------------------------------------------------------------
@@ -226,6 +230,12 @@ class nanoleafLight:
         :param duration: transition duration in tenths of a second (0 = instant)
         :returns: True if successful, otherwise False
         """
+        if not 0 <= hue <= 360:
+            raise ValueError("Hue should be between 0 and 360")
+        if not 0 <= saturation <= 100:
+            raise ValueError("Saturation should be between 0 and 100")
+        if not 0 <= brightness <= 100:
+            raise ValueError("Brightness should be between 0 and 100")
         data = {
             "hue": {"value": hue},
             "sat": {"value": saturation},
@@ -245,6 +255,10 @@ class nanoleafLight:
         :param duration: transition duration in tenths of a second (0 = instant)
         :returns: True if successful, otherwise False
         """
+        if not 1200 <= ct <= 6500:
+            raise ValueError("Colour temp should be between 1200 and 6500")
+        if not 0 <= brightness <= 100:
+            raise ValueError("Brightness should be between 0 and 100")
         data = {
             "ct": {"value": ct},
             "brightness": {"value": brightness, "duration": duration},
@@ -265,6 +279,8 @@ class nanoleafLight:
         :returns: True if successful, otherwise False
         """
         r, g, b = rgb
+        if not all(0 <= c <= 255 for c in (r, g, b)):
+            raise ValueError("RGB channels must each be between 0 and 255")
         h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
         hue = round(h * 360)
         saturation = round(s * 100)

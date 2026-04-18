@@ -187,4 +187,4 @@ def test_ct_to_hsb_and_back(light):
     time.sleep(1)
     # should not crash and should return to CT mode
     state = light.get_full_state()
-    assert state is not None
+    assert state != {}
