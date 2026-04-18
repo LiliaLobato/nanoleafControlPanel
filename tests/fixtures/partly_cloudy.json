@@ -1,5 +1,5 @@
 {
-  "coord": {"lon": -122.1923, "lat": 47.6144},
+  "coord": {"lon": 0.0, "lat": 0.0},
   "weather": [{"id": 802, "main": "Clouds", "description": "scattered clouds", "icon": "03d"}],
   "base": "stations",
   "main": {
@@ -25,6 +25,6 @@
   },
   "timezone": -25200,
   "id": 5786882,
-  "name": "Bellevue",
+  "name": "Test Location",
   "cod": 200
 }

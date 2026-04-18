@@ -1,14 +1,13 @@
 """openWeather.py
 
-Enhanced OpenWeather API wrapper for the Nanoleaf Sunrise/Sunset Controller.
+OpenWeather API wrapper for the Nanoleaf Sunrise/Sunset Controller.
 
 Provides weather data, adverse condition detection, sun position calculation,
-and darkness evaluation. Designed to be imported without side effects —
+and darkness evaluation. Designed to be imported without side effects;
 all test/demo code is behind if __name__ == "__main__".
 """
 
 import json
-import math
 import os
 from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Any, Dict, Optional
@@ -17,7 +16,10 @@ import requests
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
 
-LOCAL_TZ = ZoneInfo("America/Los_Angeles")
+from noaa_solar import get_sun_elevation as _noaa_elevation, _julian_date
+
+load_dotenv()
+LOCAL_TZ = ZoneInfo(os.getenv("TIMEZONE", "America/Los_Angeles"))
 
 # Condition codes that indicate reduced outdoor light
 _ADVERSE_CODE_RANGES = [
@@ -118,8 +120,8 @@ class OpenWeatherLight:
         """True if weather condition code implies reduced outdoor light.
 
         Triggers on: Thunderstorm (2xx), Drizzle (3xx), Rain (5xx), Snow (6xx),
-        Atmosphere/fog/mist/haze (7xx), broken/overcast clouds (803-804).
-        Does NOT trigger on: Clear (800), few/scattered clouds (801-802).
+        Atmosphere/fog/mist/haze (7xx), broken/overcast clouds (803 to 804).
+        Does NOT trigger on: Clear (800), few/scattered clouds (801 to 802).
         """
         code = self.weather.condition_id
         for low, high in _ADVERSE_CODE_RANGES:
@@ -154,7 +156,7 @@ class OpenWeatherLight:
         if not self.has_adverse_conditions() or cloud_pct < cloud_threshold:
             return sunset
 
-        # Linear interpolation: threshold% → offset_min, 100% → offset_max
+        # Linear interpolation: threshold% to offset_min, 100% to offset_max
         t = (cloud_pct - cloud_threshold) / (100 - cloud_threshold)
         offset_minutes = offset_min + (offset_max - offset_min) * t
         return sunset - timedelta(minutes=offset_minutes)
@@ -164,82 +166,10 @@ class OpenWeatherLight:
     def get_sun_elevation(self, at: Optional[datetime] = None) -> float:
         """Sun elevation angle in degrees at the given time (or now).
 
-        Pure math from lat/lon/UTC datetime — no API call.
+        Pure math from lat/lon/UTC datetime, no API call.
         Uses the NOAA solar position algorithm.
         """
-        if at is None:
-            at = datetime.now(tz=dt_timezone.utc)
-        elif at.tzinfo is None:
-            raise ValueError("Datetime must be timezone-aware")
-        else:
-            at = at.astimezone(dt_timezone.utc)
-
-        # Julian date
-        jd = _julian_date(at)
-        # Julian century
-        jc = (jd - 2451545.0) / 36525.0
-
-        # Solar geometry
-        geom_mean_long = (280.46646 + jc * (36000.76983 + 0.0003032 * jc)) % 360
-        geom_mean_anom = 357.52911 + jc * (35999.05029 - 0.0001537 * jc)
-        eccent = 0.016708634 - jc * (0.000042037 + 0.0000001267 * jc)
-
-        anom_rad = math.radians(geom_mean_anom)
-        sun_eq_ctr = (
-            math.sin(anom_rad) * (1.914602 - jc * (0.004817 + 0.000014 * jc))
-            + math.sin(2 * anom_rad) * (0.019993 - 0.000101 * jc)
-            + math.sin(3 * anom_rad) * 0.000289
-        )
-
-        sun_true_long = geom_mean_long + sun_eq_ctr
-        sun_app_long = sun_true_long - 0.00569 - 0.00478 * math.sin(
-            math.radians(125.04 - 1934.136 * jc)
-        )
-
-        mean_obliq = (
-            23.0 + (26.0 + (21.448 - jc * (46.815 + jc * (0.00059 - jc * 0.001813))) / 60.0) / 60.0
-        )
-        obliq_corr = mean_obliq + 0.00256 * math.cos(
-            math.radians(125.04 - 1934.136 * jc)
-        )
-
-        # Solar declination
-        declination = math.degrees(
-            math.asin(math.sin(math.radians(obliq_corr)) * math.sin(math.radians(sun_app_long)))
-        )
-
-        # Equation of time (minutes)
-        var_y = math.tan(math.radians(obliq_corr / 2)) ** 2
-        geom_mean_long_rad = math.radians(geom_mean_long)
-        eq_of_time = 4 * math.degrees(
-            var_y * math.sin(2 * geom_mean_long_rad)
-            - 2 * eccent * math.sin(anom_rad)
-            + 4 * eccent * var_y * math.sin(anom_rad) * math.cos(2 * geom_mean_long_rad)
-            - 0.5 * var_y * var_y * math.sin(4 * geom_mean_long_rad)
-            - 1.25 * eccent * eccent * math.sin(2 * anom_rad)
-        )
-
-        # Hour angle
-        utc_hours = at.hour + at.minute / 60.0 + at.second / 3600.0
-        true_solar_time = (utc_hours * 60 + eq_of_time + 4 * self.longitude) % 1440
-        if true_solar_time < 0:
-            true_solar_time += 1440
-
-        hour_angle = true_solar_time / 4 - 180
-        if hour_angle < -180:
-            hour_angle += 360
-
-        # Solar elevation
-        lat_rad = math.radians(self.latitude)
-        decl_rad = math.radians(declination)
-        elevation = math.degrees(
-            math.asin(
-                math.sin(lat_rad) * math.sin(decl_rad)
-                + math.cos(lat_rad) * math.cos(decl_rad) * math.cos(math.radians(hour_angle))
-            )
-        )
-
-        return elevation
+        return _noaa_elevation(self.latitude, self.longitude, at=at)
 
     # --- Darkness detection ---
 
@@ -266,22 +196,6 @@ class OpenWeatherLight:
         return False
 
 
-def _julian_date(dt_utc: datetime) -> float:
-    """Convert a UTC datetime to Julian Date."""
-    y = dt_utc.year
-    m = dt_utc.month
-    d = dt_utc.day + (dt_utc.hour + dt_utc.minute / 60.0 + dt_utc.second / 3600.0) / 24.0
-
-    if m <= 2:
-        y -= 1
-        m += 12
-
-    a = int(y / 100)
-    b = 2 - a + int(a / 4)
-
-    return int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + d + b - 1524.5
-
-
 # --- Module entry point (demo / manual testing only) ---
 
 if __name__ == "__main__":
@@ -295,12 +209,12 @@ if __name__ == "__main__":
     my_weather = OpenWeatherLight(LATITUDE, LONGITUDE, AUTH_TOKEN)
 
     print(f"Location: {my_weather.name}")
-    print(f"Weather: {my_weather.weather.main} — {my_weather.weather.description}")
+    print(f"Weather: {my_weather.weather.main}, {my_weather.weather.description}")
     print(f"Condition ID: {my_weather.weather.condition_id}")
     print(f"Clouds: {my_weather.weather.clouds}%")
     print(f"Adverse conditions: {my_weather.has_adverse_conditions()}")
     print(f"Sunrise: {my_weather.get_sunrise_dt()}")
     print(f"Sunset: {my_weather.get_sunset_dt()}")
     print(f"Adjusted sunset: {my_weather.get_adjusted_sunset()}")
-    print(f"Sun elevation: {my_weather.get_sun_elevation():.1f}°")
+    print(f"Sun elevation: {my_weather.get_sun_elevation():.1f} deg")
     print(f"Dark outside: {my_weather.is_dark_outside()}")

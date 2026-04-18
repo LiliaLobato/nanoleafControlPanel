@@ -19,7 +19,7 @@ Closes #
 
 ## Important Logic Changes
 
-*Flag any change that alters existing behavior, affects other modules, or could have unintended side effects. Delete this section if not applicable.*
+*Flag any change that alters existing behavior, affects other modules, or could have unintended side effects.*
 
 ## Testing
 

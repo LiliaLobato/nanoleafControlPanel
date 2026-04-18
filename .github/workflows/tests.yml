@@ -8,6 +8,8 @@ on:
 
 jobs:
   test:
+    # Deployment target is Raspberry Pi, but GitHub does not offer hosted Pi runners,
+    # so ubuntu-latest is used for CI instead.
     runs-on: ubuntu-latest
 
     steps:
