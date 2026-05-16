@@ -121,7 +121,8 @@ def test_fade(light):
 
     readings = []
     for _ in range(12):
-        readings.append(light.get_brightness())
+        state = light.get_full_state()
+        readings.append(state.get("brightness") if state else None)
         time.sleep(1)
 
     print("Brightness readings during fade:", readings)

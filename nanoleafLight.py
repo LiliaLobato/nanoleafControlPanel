@@ -10,25 +10,12 @@ https://github.com/MylesMor/nanoleafapi
 import colorsys
 import json
 import logging
+
 import requests
+from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException, Timeout
+from typing import Any
 
 logger = logging.getLogger(__name__)
-from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout, RequestException
-from typing import Any, Dict, List, Optional, Tuple
-
-# ---------------------------------------------------------------------------
-# Preset colours (RGB tuples)
-# ---------------------------------------------------------------------------
-
-RED = (255, 0, 0)
-ORANGE = (255, 165, 0)
-YELLOW = (255, 255, 0)
-GREEN = (0, 255, 0)
-LIGHT_BLUE = (173, 216, 230)
-BLUE = (0, 0, 255)
-PINK = (255, 192, 203)
-PURPLE = (128, 0, 128)
-WHITE = (255, 255, 255)
 
 
 # ---------------------------------------------------------------------------
@@ -56,25 +43,22 @@ class NanoleafRequestError(NanoleafError):
 # ---------------------------------------------------------------------------
 
 class nanoleafLight:
-    def __init__(
-        self,
-        name: str,
-        ip: str,
-        auth_token: str = "",
-        port: str = "16021",
-        print_errors: bool = True,
-        full_debug: bool = False,
-    ):
+    def __init__(self, name: str, ip: str, auth_token: str = "", port: str = "16021"):
         self.name = name
         self.ip = ip
         self.port = port
         self.auth_token = auth_token
-        self.print_errors = print_errors
-        self.full_debug = full_debug
         self.url = f"http://{ip}:{port}/api/v1/{auth_token}"
 
+    def __str__(self) -> str:
+        return f"{self.name}: {self.ip} - Auth setup: {self.isAuthTokenSetup()}"
+
+    def isAuthTokenSetup(self) -> bool:
+        """Return True if an auth token has been provided."""
+        return bool(self.auth_token)
+
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Internal request helper
     # ------------------------------------------------------------------
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
@@ -98,47 +82,13 @@ class nanoleafLight:
 
         if response.status_code in (200, 204):
             return response
-
         if response.status_code in (401, 403):
             raise NanoleafAuthError(f"HTTP {response.status_code}: auth error")
-
         raise NanoleafRequestError(f"HTTP {response.status_code}")
 
-    def __error_check(self, code: int) -> bool:
-        """Return True for 200/204; print and return False for all other codes."""
-        if code in (200, 204):
-            if self.full_debug:
-                print(f"{code}: Action performed successfully.")
-            return True
-        if self.print_errors:
-            messages = {
-                400: "Error 400: Bad request.",
-                401: "Error 401: Unauthorized, invalid auth token. Please generate a new one.",
-                403: "Error 403: Unauthorized, please hold the power button on the controller for 5-7 seconds, then try again.",
-                404: "Error 404: Resource not found.",
-                500: "Error 500: Internal server error.",
-            }
-            print(messages.get(code, f"Error {code}: Huh..."))
-        return False
-
-    def __str__(self) -> str:
-        return f"{self.name}: {self.ip} - Auth setup: {self.isAuthTokenSetup()}"
-
-    def isAuthTokenSetup(self) -> bool:
-        """Return True if an auth token has been provided."""
-        return bool(self.auth_token)
-
     # ------------------------------------------------------------------
-    # Identify / info
+    # Info
     # ------------------------------------------------------------------
-
-    def identify(self) -> bool:
-        """Run the identify sequence on the lights."""
-        try:
-            self._request("PUT", "/identify")
-            return True
-        except NanoleafError:
-            return False
 
     def check_heartbeat(self) -> bool:
         """Return True if the lamp is reachable and responding."""
@@ -148,7 +98,7 @@ class nanoleafLight:
         except NanoleafError:
             return False
 
-    def get_info(self) -> Dict[str, Any]:
+    def get_info(self) -> dict[str, Any]:
         """Single GET to the device root. Returns full device info dict.
 
         :raises NanoleafConnectionError: on network failure
@@ -158,7 +108,7 @@ class nanoleafLight:
         response = self._request("GET", "")
         return json.loads(response.text)
 
-    def get_full_state(self) -> Dict[str, Any]:
+    def get_full_state(self) -> dict[str, Any]:
         """Return the lamp's current state using a single round-trip.
 
         Extracts the 'state' subfield from get_info() and returns a flat dict:
@@ -211,14 +161,8 @@ class nanoleafLight:
         except NanoleafError:
             return False
 
-    def toggle_power(self) -> bool:
-        """Toggle the lights on/off."""
-        if self.get_power():
-            return self.power_off()
-        return self.power_on()
-
     # ------------------------------------------------------------------
-    # Batched colour setters (Phase 2 additions)
+    # Batched colour setters
     # ------------------------------------------------------------------
 
     def set_hsb(self, hue: int, saturation: int, brightness: int, duration: int = 0) -> bool:
@@ -269,7 +213,7 @@ class nanoleafLight:
         except NanoleafError:
             return False
 
-    def set_color(self, rgb: Tuple[int, int, int]) -> bool:
+    def set_color(self, rgb: tuple[int, int, int]) -> bool:
         """Set the light colour from an RGB tuple via a batched /state call.
 
         Converts RGB (0–255 per channel) to HSB using colorsys, then sends
@@ -282,160 +226,4 @@ class nanoleafLight:
         if not all(0 <= c <= 255 for c in (r, g, b)):
             raise ValueError("RGB channels must each be between 0 and 255")
         h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-        hue = round(h * 360)
-        saturation = round(s * 100)
-        brightness = round(v * 100)
-        return self.set_hsb(hue, saturation, brightness)
-
-    # ------------------------------------------------------------------
-    # Individual setters (kept for backwards compatibility)
-    # ------------------------------------------------------------------
-
-    def set_brightness(self, brightness: int, duration: int = 0) -> bool:
-        """Set the brightness of the lights (0–100)."""
-        if not 0 <= brightness <= 100:
-            raise ValueError("Brightness should be between 0 and 100")
-        data = {"brightness": {"value": brightness, "duration": duration}}
-        try:
-            self._request("PUT", "/state", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def increment_brightness(self, brightness: int) -> bool:
-        """Increment the brightness by the given amount (can be negative)."""
-        data = {"brightness": {"increment": brightness}}
-        try:
-            self._request("PUT", "/state", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def get_brightness(self) -> Optional[int]:
-        """Return the current brightness value, or None on failure."""
-        try:
-            response = self._request("GET", "/state/brightness")
-            return json.loads(response.text)["value"]
-        except NanoleafError:
-            return None
-
-    def set_hue(self, value: int) -> bool:
-        """Set the hue of the lights (0–360)."""
-        if not 0 <= value <= 360:
-            raise ValueError("Hue should be between 0 and 360")
-        data = {"hue": {"value": value}}
-        try:
-            self._request("PUT", "/state", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def increment_hue(self, value: int) -> bool:
-        """Increment the hue by the given amount (can be negative)."""
-        data = {"hue": {"increment": value}}
-        try:
-            self._request("PUT", "/state", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def get_hue(self) -> Optional[int]:
-        """Return the current hue value, or None on failure."""
-        try:
-            response = self._request("GET", "/state/hue")
-            return json.loads(response.text)["value"]
-        except NanoleafError:
-            return None
-
-    def set_saturation(self, value: int) -> bool:
-        """Set the saturation of the lights (0–100)."""
-        if not 0 <= value <= 100:
-            raise ValueError("Saturation should be between 0 and 100")
-        data = {"sat": {"value": value}}
-        try:
-            self._request("PUT", "/state", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def increment_saturation(self, value: int) -> bool:
-        """Increment the saturation by the given amount (can be negative)."""
-        data = {"sat": {"increment": value}}
-        try:
-            self._request("PUT", "/state", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def get_saturation(self) -> Optional[int]:
-        """Return the current saturation value, or None on failure."""
-        try:
-            response = self._request("GET", "/state/sat")
-            return json.loads(response.text)["value"]
-        except NanoleafError:
-            return None
-
-    def set_color_temp(self, value: int) -> bool:
-        """Set the white colour temperature (1200–6500 K)."""
-        if not 1200 <= value <= 6500:
-            raise ValueError("Colour temp should be between 1200 and 6500")
-        data = {"ct": {"value": value}}
-        try:
-            self._request("PUT", "/state", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def increment_color_temp(self, value: int) -> bool:
-        """Increment the colour temperature by the given amount (can be negative)."""
-        data = {"ct": {"increment": value}}
-        try:
-            self._request("PUT", "/state", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def get_color_temp(self) -> Optional[int]:
-        """Return the current colour temperature, or None on failure."""
-        try:
-            response = self._request("GET", "/state/ct")
-            return json.loads(response.text)["value"]
-        except NanoleafError:
-            return None
-
-    def get_color_mode(self) -> Optional[str]:
-        """Return the current colour mode ('ct' or 'hs'), or None on failure."""
-        try:
-            response = self._request("GET", "/state/colorMode")
-            return json.loads(response.text)
-        except NanoleafError:
-            return None
-
-    # ------------------------------------------------------------------
-    # Effects
-    # ------------------------------------------------------------------
-
-    def get_current_effect(self) -> Optional[str]:
-        """Return the currently selected effect name, or None on failure."""
-        try:
-            response = self._request("GET", "/effects/select")
-            return json.loads(response.text)
-        except NanoleafError:
-            return None
-
-    def set_effect(self, effect_name: str) -> bool:
-        """Set the active effect by name."""
-        data = {"select": effect_name}
-        try:
-            self._request("PUT", "/effects", data=json.dumps(data))
-            return True
-        except NanoleafError:
-            return False
-
-    def list_effects(self) -> Optional[List[str]]:
-        """Return a list of available effect names, or None on failure."""
-        try:
-            response = self._request("GET", "/effects/effectsList")
-            return json.loads(response.text)
-        except NanoleafError:
-            return None
+        return self.set_hsb(round(h * 360), round(s * 100), round(v * 100))
