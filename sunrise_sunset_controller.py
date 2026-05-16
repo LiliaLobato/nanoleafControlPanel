@@ -7,21 +7,44 @@ Usage (crontab):
     */5 * * * * /usr/bin/python3 /home/pi/nanoleafControlPanel/sunrise_sunset_controller.py
 """
 
+import dataclasses
 import logging
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
+import filelock
 from dotenv import load_dotenv
 
+from color_helper import describe_color
 from config import Config, load_config
 from dateTime import combine
 from log_setup import setup_logging
+from nanoleafLight import nanoleafLight, NanoleafConnectionError
 from openWeather import OpenWeatherLight
-from profiles import calculate_effective_color_profile, calculate_target_profile
-from state import load_state, save_state, acquire_run_lock
+from profiles import (
+    apply_profile,
+    calculate_effective_color_profile,
+    calculate_target_profile,
+)
+from state import (
+    acquire_run_lock,
+    apply_dnd_flag,
+    clear_dnd_if_expired,
+    detect_manual_override,
+    handle_lamp_failure,
+    handle_lamp_success,
+    is_lamp_in_backoff,
+    load_state,
+    save_state,
+    should_respect_dnd,
+)
 from weather_cache import get_weather
 
 load_dotenv()
+
+LOCAL_TZ = ZoneInfo(os.getenv("TIMEZONE", "America/Los_Angeles"))
 
 logger = logging.getLogger(__name__)
 
@@ -104,3 +127,126 @@ def calculate_phase(
             return "late_night_override"
 
     return "off"
+
+
+# ---------------------------------------------------------------------------
+# Cron orchestration
+# ---------------------------------------------------------------------------
+
+def _run(now: Optional[datetime] = None) -> None:
+    """Execute one cron tick of the controller."""
+    config = load_config()
+    setup_logging(config)
+
+    state = load_state()
+
+    if now is None:
+        now = datetime.now(tz=LOCAL_TZ)
+
+    weather = get_weather(state, now, config)
+    clear_dnd_if_expired(state, now, config, weather)
+
+    phase = calculate_phase(now, weather, config, state)
+    if phase == "morning_ramp" and state.get("late_night_override"):
+        state["late_night_override"] = None
+    target_profile = calculate_target_profile(phase, now, weather, config, state)
+    effective_color = calculate_effective_color_profile(phase, now, weather, config, state)
+    should_be_on = target_profile is not None and not should_respect_dnd(state, now)
+
+    if is_lamp_in_backoff(state, now):
+        logger.info("Lamp in backoff, skipping API call (phase=%s)", phase)
+        save_state(state)
+        return
+
+    light = nanoleafLight(
+        os.getenv("NANOLEAF_NAME", "Nanoleaf"),
+        os.getenv("NANOLEAF_IP", ""),
+        os.getenv("NANOLEAF_AUTH_TOKEN", ""),
+    )
+    light_state = light.get_full_state()
+    if not light_state:
+        handle_lamp_failure(
+            state, now, config,
+            NanoleafConnectionError("lamp unreachable — get_full_state returned empty"),
+        )
+        save_state(state)
+        return
+
+    last_applied = state.get("last_applied") or {}
+    override = detect_manual_override(light_state, last_applied, phase)
+
+    if override == "manual_off":
+        apply_dnd_flag(state, phase, now, config)
+        should_be_on = False
+        logger.info(
+            "Manual OFF detected (phase=%s) — DND until %s",
+            phase, state.get("do_not_disturb_until"),
+        )
+    elif override == "late_night_trigger":
+        state["late_night_override"] = {
+            "started_at": now.isoformat(),
+            "until": (now + timedelta(minutes=config.late_night_fade_minutes)).isoformat(),
+        }
+        phase = "late_night_override"
+        target_profile = calculate_target_profile(phase, now, weather, config, state)
+        effective_color = calculate_effective_color_profile(phase, now, weather, config, state)
+        should_be_on = True
+        logger.info(
+            "Late-night override triggered — until %s",
+            state["late_night_override"]["until"],
+        )
+    elif override == "manual_on":
+        state["do_not_disturb_until"] = None
+        state["dnd_scope"] = None
+        logger.info("Manual ON detected (phase=%s) — DND cleared", phase)
+
+    try:
+        ok = apply_profile(light, target_profile, effective_color, should_be_on, light_state)
+    except Exception as exc:
+        handle_lamp_failure(state, now, config, exc)
+        save_state(state)
+        return
+
+    if not ok:
+        handle_lamp_failure(
+            state, now, config,
+            NanoleafConnectionError("apply_profile failed"),
+        )
+        save_state(state)
+        return
+
+    prev_power = last_applied.get("power")
+    state["last_applied"] = {
+        "power": should_be_on,
+        "profile": dataclasses.asdict(effective_color),
+        "phase": phase,
+        "at": now.isoformat(),
+    }
+    if phase == "day" and prev_power != should_be_on:
+        state["last_daytime_toggle_at"] = now.isoformat()
+
+    handle_lamp_success(state)
+    save_state(state)
+
+    logger.info(
+        "phase=%s override=%s color=%s on=%s",
+        phase, override, describe_color(effective_color), should_be_on,
+    )
+
+
+def main(now: Optional[datetime] = None) -> None:
+    try:
+        lock = acquire_run_lock()
+    except filelock.Timeout:
+        logger.debug("Another controller instance is running — exiting")
+        return
+
+    with lock:
+        try:
+            _run(now)
+        except Exception:
+            logger.exception("Unhandled exception in controller — exiting cleanly")
+
+
+if __name__ == "__main__":
+    main()

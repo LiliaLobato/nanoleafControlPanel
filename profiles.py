@@ -2,12 +2,12 @@
 
 Light profile computation for the Nanoleaf controller.
 Calculates target and effective color profiles for each phase,
-including the two-stage morning ramp. apply_profile() lives here too (task 15).
+including the two-stage morning ramp. apply_profile() lives here too.
 """
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from config import (
     Config,
@@ -149,6 +149,43 @@ def calculate_target_profile(
     return None
 
 
+# ---------------------------------------------------------------------------
+# Profile application
+# ---------------------------------------------------------------------------
+
+def apply_profile(
+    light: Any,
+    target_profile: Optional[LightProfile],
+    effective_color: LightProfile,
+    should_be_on: bool,
+    light_state: dict,
+) -> bool:
+    """Send effective_color to the lamp and adjust power as needed.
+
+    Always pre-stages the color (even when the lamp is off) so the next
+    manual-on immediately reflects the correct color.
+
+    Returns True on success, False if any API call failed.
+    """
+    if effective_color.mode == "ct":
+        ok = light.set_color_temp_and_brightness(
+            effective_color.color_temp, effective_color.brightness
+        )
+    else:
+        ok = light.set_hsb(
+            effective_color.hue, effective_color.saturation, effective_color.brightness
+        )
+    if not ok:
+        return False
+
+    currently_on = light_state.get("on", False)
+    if should_be_on and not currently_on:
+        return light.power_on()
+    if not should_be_on and currently_on:
+        return light.power_off()
+    return True
+
+
 def calculate_effective_color_profile(
     phase: str,
     now: datetime,
@@ -167,40 +204,3 @@ def calculate_effective_color_profile(
     if phase == "day":
         return DAYTIME_ON_PROFILE
     return NIGHT_PROFILE
-
-
-# ---------------------------------------------------------------------------
-# Manual override detection (Task 12)
-# ---------------------------------------------------------------------------
-
-def detect_manual_override(
-    light_state: dict,
-    last_applied: dict,
-    phase: str,
-) -> str:
-    """Detect whether the user manually changed power since the last cron run.
-
-    Compares actual lamp power (light_state["on"]) against the expected power
-    from our last applied state (last_applied["power"]).
-
-    Returns one of:
-      "none"               — no change detected
-      "manual_on"          — user turned ON when we expected OFF
-      "manual_off"         — user turned OFF when we expected ON
-      "late_night_trigger" — user turned ON after hard cutoff (off phase)
-    """
-    if not last_applied:
-        return "none"
-
-    actual_on = light_state.get("on", False)
-    expected_on = last_applied.get("power", False)
-
-    if actual_on == expected_on:
-        return "none"
-
-    if actual_on and not expected_on:
-        if phase == "off":
-            return "late_night_trigger"
-        return "manual_on"
-
-    return "manual_off"

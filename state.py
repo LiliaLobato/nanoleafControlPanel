@@ -201,3 +201,40 @@ def handle_lamp_failure(state: dict, now: datetime, config: Config, exc: Excepti
         n, len(config.backoff_schedule_minutes),
         retry_at.strftime("%H:%M"), exc,
     )
+
+
+# ---------------------------------------------------------------------------
+# Manual override detection
+# ---------------------------------------------------------------------------
+
+def detect_manual_override(
+    light_state: dict,
+    last_applied: dict,
+    phase: str,
+) -> str:
+    """Detect whether the user manually changed power since the last cron run.
+
+    Compares actual lamp power (light_state["on"]) against the expected power
+    from our last applied state (last_applied["power"]).
+
+    Returns one of:
+      "none"               — no change detected
+      "manual_on"          — user turned ON when we expected OFF
+      "manual_off"         — user turned OFF when we expected ON
+      "late_night_trigger" — user turned ON after hard cutoff (off phase)
+    """
+    if not last_applied:
+        return "none"
+
+    actual_on = light_state.get("on", False)
+    expected_on = last_applied.get("power", False)
+
+    if actual_on == expected_on:
+        return "none"
+
+    if actual_on and not expected_on:
+        if phase == "off":
+            return "late_night_trigger"
+        return "manual_on"
+
+    return "manual_off"

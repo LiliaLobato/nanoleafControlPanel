@@ -1,4 +1,4 @@
-"""color_names.py
+"""color_helper.py
 
 describe_color() helper: translates a LightProfile into a human-readable
 description used by CLI messages and verbose controller logs.
@@ -66,7 +66,7 @@ def _load_overrides() -> dict:
             "brightness_names": data.get("brightness_names", {}),
         }
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("color_names: could not read config overrides (%s)", exc)
+        logger.warning("color_helper: could not read config overrides (%s)", exc)
         return {}
 
 
@@ -88,7 +88,7 @@ def _lookup(value: int, defaults: list, overrides: dict) -> str:
             if lo <= value <= hi:
                 candidates.append((hi - lo, name))
         except (ValueError, AttributeError):
-            logger.warning("color_names: invalid range key %r — skipping", range_str)
+            logger.warning("color_helper: invalid range key %r — skipping", range_str)
 
     if not candidates:
         return ""

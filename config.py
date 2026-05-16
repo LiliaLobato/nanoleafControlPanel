@@ -111,7 +111,7 @@ OFF_PROFILE = LightProfile(mode="hsb", brightness=0)
 def load_config() -> Config:
     """Return Config built from defaults overlaid with ~/.config/nanoleafControlPanel/config.json.
 
-    Unknown keys (e.g. color_names used by describe_color) are silently ignored here
+    Unknown keys (e.g. color_names/saturation_names used by describe_color in color_helper) are silently ignored here
     and read directly from the file by the functions that need them.
     Missing file or parse errors fall back to defaults.
     """
