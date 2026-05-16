@@ -14,21 +14,10 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-from config import (
-    Config,
-    LightProfile,
-    SUNRISE_START_PROFILE,
-    SUNRISE_END_PROFILE,
-    MORNING_PROFILE,
-    DAYTIME_ON_PROFILE,
-    NIGHT_PROFILE,
-    LATE_NIGHT_PROFILE,
-    PARTY_PROFILE,
-    OFF_PROFILE,
-    load_config,
-)
+from config import Config, load_config
 from dateTime import combine
 from openWeather import OpenWeatherLight
+from profiles import calculate_effective_color_profile, calculate_target_profile
 from state import load_state, save_state, acquire_run_lock
 from weather_cache import get_weather
 
