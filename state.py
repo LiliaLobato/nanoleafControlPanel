@@ -151,3 +151,53 @@ def clear_dnd_if_expired(
         if now >= morning_ramp_start:
             state["do_not_disturb_until"] = None
             state["dnd_scope"] = None
+
+
+# ---------------------------------------------------------------------------
+# Lamp failure backoff (Task 13)
+# ---------------------------------------------------------------------------
+
+def is_lamp_in_backoff(state: dict, now: datetime) -> bool:
+    """Return True if the lamp is in backoff and API calls should be skipped."""
+    next_retry = state.get("lamp_failure_state", {}).get("next_retry_at")
+    if not next_retry:
+        return False
+    return datetime.fromisoformat(next_retry) > now
+
+
+def handle_lamp_success(state: dict) -> None:
+    """Reset lamp failure state after a successful API call."""
+    failure = state["lamp_failure_state"]
+    if failure["consecutive_failures"] > 0:
+        logger.info(
+            "Lamp recovered after %d consecutive failures",
+            failure["consecutive_failures"],
+        )
+    failure["consecutive_failures"] = 0
+    failure["last_failure_at"] = None
+    failure["last_failure_type"] = None
+    failure["next_retry_at"] = None
+
+
+def handle_lamp_failure(state: dict, now: datetime, config: Config, exc: Exception) -> None:
+    """Increment lamp failure state and schedule next retry with exponential backoff."""
+    failure = state["lamp_failure_state"]
+    failure["consecutive_failures"] += 1
+    failure["last_failure_at"] = now.isoformat()
+    failure["last_failure_type"] = type(exc).__name__
+    n = failure["consecutive_failures"]
+    backoff_min = config.backoff_schedule_minutes[
+        min(n - 1, len(config.backoff_schedule_minutes) - 1)
+    ]
+    retry_at = now + timedelta(minutes=backoff_min)
+    failure["next_retry_at"] = retry_at.isoformat()
+    state["last_error"] = {
+        "timestamp": now.isoformat(),
+        "type": type(exc).__name__,
+        "message": str(exc),
+    }
+    logger.warning(
+        "Lamp API failure %d/%d, backing off until %s (%s)",
+        n, len(config.backoff_schedule_minutes),
+        retry_at.strftime("%H:%M"), exc,
+    )

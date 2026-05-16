@@ -9,13 +9,13 @@ Usage (crontab):
 
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 
 from config import Config, load_config
 from dateTime import combine
+from log_setup import setup_logging
 from openWeather import OpenWeatherLight
 from profiles import calculate_effective_color_profile, calculate_target_profile
 from state import load_state, save_state, acquire_run_lock
@@ -24,8 +24,6 @@ from weather_cache import get_weather
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
-LOG_DIR = Path.home() / ".local" / "state" / "nanoleafControlPanel"
 
 
 # ---------------------------------------------------------------------------
