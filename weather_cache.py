@@ -104,3 +104,37 @@ def get_weather(state: dict, now: datetime, config: Config) -> Optional[OpenWeat
 
     logger.error("No weather cache available and API unreachable — running without weather data")
     return None
+
+
+# ---------------------------------------------------------------------------
+# Day-phase darkness evaluation with oscillation lockout (Task 11)
+# ---------------------------------------------------------------------------
+
+def evaluate_day_darkness(
+    weather: Optional[OpenWeatherLight],
+    state: dict,
+    now: datetime,
+    config: Config,
+) -> bool:
+    """Return whether it is currently dark outside, with oscillation lockout.
+
+    If the last daytime toggle was within day_toggle_lockout_minutes, returns
+    the cached power state from last_applied without re-evaluating weather.
+    This prevents the lights from flipping on/off every 5 minutes when sun
+    elevation hovers near the threshold on a partly cloudy day.
+
+    State is not modified here — last_daytime_toggle_at is updated by main()
+    when a power change is actually applied.
+    """
+    last_toggle = state.get("last_daytime_toggle_at")
+    if last_toggle:
+        elapsed_min = (now - datetime.fromisoformat(last_toggle)).total_seconds() / 60
+        if elapsed_min < config.day_toggle_lockout_minutes:
+            last_applied = state.get("last_applied") or {}
+            return bool(last_applied.get("power", False))
+
+    if not weather:
+        return False
+    return weather.is_dark_outside(
+        config.dark_sun_elevation_deg, config.dark_cloud_threshold, at=now
+    )

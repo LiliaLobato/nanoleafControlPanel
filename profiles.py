@@ -24,6 +24,7 @@ from config import (
 from dateTime import combine
 from interpolation import interpolate_profiles
 from openWeather import OpenWeatherLight
+from weather_cache import evaluate_day_darkness
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +91,7 @@ def calculate_target_profile(
         return _morning_ramp_profile(now, weather, config)
 
     if phase == "day":
-        if weather and weather.is_dark_outside(
-            config.dark_sun_elevation_deg, config.dark_cloud_threshold
-        ):
+        if evaluate_day_darkness(weather, state, now, config):
             return DAYTIME_ON_PROFILE
         return None
 
@@ -168,3 +167,40 @@ def calculate_effective_color_profile(
     if phase == "day":
         return DAYTIME_ON_PROFILE
     return NIGHT_PROFILE
+
+
+# ---------------------------------------------------------------------------
+# Manual override detection (Task 12)
+# ---------------------------------------------------------------------------
+
+def detect_manual_override(
+    light_state: dict,
+    last_applied: dict,
+    phase: str,
+) -> str:
+    """Detect whether the user manually changed power since the last cron run.
+
+    Compares actual lamp power (light_state["on"]) against the expected power
+    from our last applied state (last_applied["power"]).
+
+    Returns one of:
+      "none"               — no change detected
+      "manual_on"          — user turned ON when we expected OFF
+      "manual_off"         — user turned OFF when we expected ON
+      "late_night_trigger" — user turned ON after hard cutoff (off phase)
+    """
+    if not last_applied:
+        return "none"
+
+    actual_on = light_state.get("on", False)
+    expected_on = last_applied.get("power", False)
+
+    if actual_on == expected_on:
+        return "none"
+
+    if actual_on and not expected_on:
+        if phase == "off":
+            return "late_night_trigger"
+        return "manual_on"
+
+    return "manual_off"
