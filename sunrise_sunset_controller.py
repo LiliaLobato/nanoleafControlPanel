@@ -7,219 +7,113 @@ Usage (crontab):
     */5 * * * * /usr/bin/python3 /home/pi/nanoleafControlPanel/sunrise_sunset_controller.py
 """
 
-import json
 import logging
-import os
-from dataclasses import dataclass, field, fields
-from datetime import datetime, time
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
-import filelock
+from dotenv import load_dotenv
+
+from config import (
+    Config,
+    LightProfile,
+    SUNRISE_START_PROFILE,
+    SUNRISE_END_PROFILE,
+    MORNING_PROFILE,
+    DAYTIME_ON_PROFILE,
+    NIGHT_PROFILE,
+    LATE_NIGHT_PROFILE,
+    PARTY_PROFILE,
+    OFF_PROFILE,
+    load_config,
+)
+from dateTime import combine
+from openWeather import OpenWeatherLight
+from state import load_state, save_state, acquire_run_lock
+from weather_cache import get_weather
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# XDG-style paths — resolve to standard Linux locations on the Pi,
-# and to equivalent directories under the user home on Windows for development.
-CONFIG_PATH = Path.home() / ".config" / "nanoleafControlPanel" / "config.json"
-STATE_DIR   = Path.home() / ".local" / "share" / "nanoleafControlPanel"
-STATE_PATH  = STATE_DIR / "state.json"
-LOG_DIR     = Path.home() / ".local" / "state" / "nanoleafControlPanel"
-LOCK_PATH   = STATE_DIR / "controller.lock"
+LOG_DIR = Path.home() / ".local" / "state" / "nanoleafControlPanel"
 
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Phase calculation
 # ---------------------------------------------------------------------------
 
-@dataclass
-class Config:
-    # --- Morning ---
-    morning_latest_start: time = field(default_factory=lambda: time(6, 0))
-    full_morning_time: time = field(default_factory=lambda: time(7, 0))
+def calculate_phase(
+    now: datetime,
+    weather: Optional[OpenWeatherLight],
+    config: Config,
+    state: dict,
+) -> str:
+    """Return the current controller phase name.
 
-    # --- Evening ---
-    force_evening_time: time = field(default_factory=lambda: time(21, 0))
-    night_full_time: time = field(default_factory=lambda: time(22, 0))
-    hard_cutoff_time: time = field(default_factory=lambda: time(23, 0))
+    Priority (first match wins):
+    1. morning_ramp  — non-negotiable sunrise simulator
+    2. party_mode    — active and not yet expired
+    3. Standard timeline: pre_morning, day, evening_ramp, night_ramp,
+       hard_cutoff_ramp, off
+    4. late_night_override — post hard_cutoff with active manual override
 
-    # --- Weather fetch anchors (5x/day) ---
-    weather_fetch_night: time = field(default_factory=lambda: time(0, 0))
-    weather_fetch_morning: time = field(default_factory=lambda: time(3, 0))
-    weather_fetch_midday: time = field(default_factory=lambda: time(9, 0))
-    weather_fetch_evening: time = field(default_factory=lambda: time(14, 0))
-    weather_fetch_late_evening: time = field(default_factory=lambda: time(20, 0))
-    weather_cache_max_age_hours: int = 5
-
-    # --- Adverse weather sunset offset (scales with cloud cover) ---
-    adverse_offset_min: int = 30
-    adverse_offset_max: int = 75
-    cloud_threshold: int = 60
-
-    # --- Darkness detection ---
-    dark_sun_elevation_deg: float = 20.0
-    dark_cloud_threshold: int = 75
-
-    # --- Oscillation protection ---
-    day_toggle_lockout_minutes: int = 30
-
-    # --- Late-night manual override ---
-    late_night_fade_minutes: int = 120
-
-    # --- Party mode defaults ---
-    party_default_end: time = field(default_factory=lambda: time(2, 0))
-    party_default_fade_minutes: int = 30
-
-    # --- Failure backoff ---
-    backoff_schedule_minutes: list = field(default_factory=lambda: [5, 10, 20, 40, 60])
-
-    # --- Verbose logging ---
-    verbose: bool = False
-
-
-# ---------------------------------------------------------------------------
-# Light profiles
-# ---------------------------------------------------------------------------
-
-@dataclass
-class LightProfile:
-    mode: str           # "hsb" or "ct"
-    hue: int = 0
-    saturation: int = 0
-    brightness: int = 0
-    color_temp: int = 0
-
-
-# Sunrise start: warm dim amber (beginning of two-stage morning ramp)
-SUNRISE_START_PROFILE = LightProfile(mode="hsb", hue=20, saturation=70, brightness=5)
-
-# Sunrise end / morning ramp stage 1 target: warm bright (end of stage 1)
-SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=90)
-
-# Morning: cool blue-white, energizing (stage 2 target — final morning state)
-MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=100)
-
-# Daytime-on (used when outside is dark): amber, soft
-DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=30, saturation=50, brightness=60)
-
-# Night: deep warm red-orange, cozy, dim
-NIGHT_PROFILE = LightProfile(mode="hsb", hue=15, saturation=80, brightness=20)
-
-# Late-night manual override: warm, low, visible
-LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=15, saturation=75, brightness=35)
-
-# Default party profile: vivid purple, full brightness
-PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=100)
-
-# Off target (brightness=0 signals power-off intent to interpolate_profiles)
-OFF_PROFILE = LightProfile(mode="hsb", brightness=0)
-
-
-# ---------------------------------------------------------------------------
-# Config loader
-# ---------------------------------------------------------------------------
-
-def _parse_time(value: str) -> time:
-    return datetime.strptime(value, "%H:%M").time()
-
-
-def load_config() -> Config:
-    """Return Config built from defaults overlaid with ~/.config/nanoleafControlPanel/config.json.
-
-    Unknown keys (e.g. color_names used by describe_color) are silently ignored here
-    and read directly from the file by the functions that need them.
-    Missing file or parse errors fall back to defaults.
+    Phase boundaries:
+        pre_morning      → before morning_ramp_start
+        morning_ramp     → [morning_ramp_start, full_morning_time)
+        day              → [full_morning_time, adjusted_sunset)
+        evening_ramp     → [adjusted_sunset, force_evening_time)   DAYTIME_ON held
+        night_ramp       → [force_evening_time, night_full_time)   DAYTIME_ON→NIGHT
+        hard_cutoff_ramp → [night_full_time, hard_cutoff_time)     NIGHT→OFF
+        off / late_night_override → [hard_cutoff_time, ...)
     """
-    config = Config()
-    if not CONFIG_PATH.exists():
-        return config
+    if weather:
+        sunrise_dt = weather.get_sunrise_dt()
+        morning_ramp_start = min(
+            sunrise_dt,
+            combine(now, config.morning_latest_start),
+        )
+        adjusted_sunset = weather.get_adjusted_sunset(
+            config.cloud_threshold,
+            config.adverse_offset_min,
+            config.adverse_offset_max,
+        )
+    else:
+        morning_ramp_start = combine(now, config.morning_latest_start)
+        adjusted_sunset = combine(now, config.force_evening_time)
 
-    try:
-        with open(CONFIG_PATH) as f:
-            overrides = json.load(f)
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("load_config: could not read %s (%s) — using defaults", CONFIG_PATH, exc)
-        return config
+    full_morning_dt  = combine(now, config.full_morning_time)
+    force_evening_dt = combine(now, config.force_evening_time)
+    night_full_dt    = combine(now, config.night_full_time)
+    hard_cutoff_dt   = combine(now, config.hard_cutoff_time)
 
-    valid_keys = {f.name for f in fields(Config)}
-    for key, value in overrides.items():
-        if key not in valid_keys:
-            continue
-        try:
-            current = getattr(config, key)
-            if isinstance(current, time):
-                value = _parse_time(value)
-            setattr(config, key, value)
-        except (ValueError, TypeError) as exc:
-            logger.warning("load_config: invalid value for %s (%s) — keeping default", key, exc)
+    # 1. Morning ramp
+    if morning_ramp_start <= now < full_morning_dt:
+        return "morning_ramp"
 
-    return config
+    # 2. Party mode
+    pm = state.get("party_mode", {})
+    if pm.get("active") and pm.get("ends_at"):
+        ends_at = datetime.fromisoformat(pm["ends_at"])
+        if now < ends_at:
+            return "party_mode"
 
+    # 3. Standard timeline
+    if now < morning_ramp_start:
+        return "pre_morning"
+    if now < adjusted_sunset:
+        return "day"
+    if now < force_evening_dt:
+        return "evening_ramp"
+    if now < night_full_dt:
+        return "night_ramp"
+    if now < hard_cutoff_dt:
+        return "hard_cutoff_ramp"
 
-# ---------------------------------------------------------------------------
-# State file
-# ---------------------------------------------------------------------------
+    # 4. Post hard-cutoff — check for active late-night override
+    late_night = state.get("late_night_override")
+    if late_night and late_night.get("until"):
+        if datetime.fromisoformat(late_night["until"]) > now:
+            return "late_night_override"
 
-def _empty_state() -> dict:
-    return {
-        "weather_cache": None,
-        "last_applied": None,
-        "last_daytime_toggle_at": None,
-        "do_not_disturb_until": None,
-        "dnd_scope": None,
-        "late_night_override": None,
-        "party_mode": {"active": False},
-        "lamp_failure_state": {
-            "consecutive_failures": 0,
-            "last_failure_at": None,
-            "last_failure_type": None,
-            "next_retry_at": None,
-        },
-        "weather_failure_state": {
-            "consecutive_failures": 0,
-            "last_failure_at": None,
-            "next_retry_at": None,
-        },
-        "last_error": None,
-    }
-
-
-def load_state() -> dict:
-    """Load state.json, returning a fresh empty state if the file is missing or corrupt.
-
-    Also ensures STATE_DIR exists so the rest of the controller can write freely.
-    """
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    if not STATE_PATH.exists():
-        return _empty_state()
-    try:
-        with open(STATE_PATH) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("load_state: could not read %s (%s) — starting fresh", STATE_PATH, exc)
-        return _empty_state()
-
-
-def save_state(state: dict) -> None:
-    """Atomically write state to disk via a temp file + os.replace()."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_PATH.parent / (STATE_PATH.name + ".tmp")
-    with open(tmp, "w") as f:
-        json.dump(state, f, indent=2, default=str)
-    os.replace(tmp, STATE_PATH)
-
-
-# ---------------------------------------------------------------------------
-# Cron overlap lock
-# ---------------------------------------------------------------------------
-
-def acquire_run_lock() -> filelock.FileLock:
-    """Acquire the single-instance run lock.
-
-    Returns the held lock on success. Raises filelock.Timeout immediately if
-    another instance of the controller is already running, so the caller can
-    exit silently without waiting.
-    """
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    lock = filelock.FileLock(str(LOCK_PATH), timeout=0)
-    lock.acquire()
-    return lock
+    return "off"
