@@ -1,327 +1,229 @@
 """nanoleafLight
 
-This module is a light version of the nanoleafapi wrapper for the Nanoleaf OpenAPI
-It provides the basic functions available in the API. 
-Some methods are debloted, others remain as original.
+Light wrapper around the Nanoleaf OpenAPI for the sunrise/sunset controller.
+Handles all Nanoleaf HTTP calls, timeouts, and exception mapping.
 
-Refer to the full nanoleafapi wrapper for discovery, setup and advance functions.
+Refer to the full nanoleafapi wrapper for discovery, setup, and advanced functions:
 https://github.com/MylesMor/nanoleafapi
 """
 
-import requests
+import colorsys
 import json
-from typing import Any, Dict, List
+import logging
 
-# Preset colours
-RED = (255, 0, 0)
-ORANGE = (255, 165, 0)
-YELLOW = (255, 255, 0)
-GREEN = (0, 255, 0)
-LIGHT_BLUE = (173, 216, 230)
-BLUE = (0, 0, 255)
-PINK = (255, 192, 203)
-PURPLE = (128, 0, 128)
-WHITE = (255, 255, 255)
+import requests
+from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException, Timeout
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class NanoleafError(Exception):
+    """Base class for all Nanoleaf errors."""
+
+
+class NanoleafConnectionError(NanoleafError):
+    """Network failure: timeout, connection refused, host unreachable."""
+
+
+class NanoleafAuthError(NanoleafError):
+    """401 or 403: invalid or missing auth token."""
+
+
+class NanoleafRequestError(NanoleafError):
+    """400, 404, 500, or other HTTP error."""
+
+
+# ---------------------------------------------------------------------------
+# Main class
+# ---------------------------------------------------------------------------
 
 class nanoleafLight:
-    def __init__(self, name, ip, auth_token="", port="16021", print_errors : bool =True, full_debug : bool =False):
+    def __init__(self, name: str, ip: str, auth_token: str = "", port: str = "16021"):
         self.name = name
         self.ip = ip
         self.port = port
         self.auth_token = auth_token
-        self.print_errors = print_errors
-        self.full_debug = full_debug
-        self.url = "http://" + ip + ":" + port +  "/api/v1/" + str(auth_token)
+        self.url = f"http://{ip}:{port}/api/v1/{auth_token}"
 
-    def __error_check(self, code : int) -> bool:
-            """Checks and displays error messages
-                Determines the request status code. 
-                Prints the error, if print_errors is true (default true)
-                Print all, if full_debug is true (default false)
-            
-            :param code: The error code
-            :returns: Returns True if request was successful, otherwise False
-            """
-            if self.print_errors:
-                if code in (200, 204):
-                    if self.full_debug: print(str(code) + ": Action performed successfully.")
-                    return True
-                if code == 400:
-                    print("Error 400: Bad request.")
-                elif code == 401:
-                    print("Error 401: Unauthorized, invalid auth token. " +
-                        "Please generate a new one.")
-                elif code == 403:
-                    print("Error 403: Unauthorized, please hold the power " +
-                        "button on the controller for 5-7 seconds, then try again.")
-                elif code == 404:
-                    print("Error 404: Resource not found.")
-                elif code == 500:
-                    print("Error 500: Internal server error.")
-                else:
-                    print("Error " + str(code) + ": Huh...")
-                return False
-            return bool(code in (200, 204))
-
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.name}: {self.ip} - Auth setup: {self.isAuthTokenSetup()}"
-    
-    
+
     def isAuthTokenSetup(self) -> bool:
-        """Simple check for authentication parameter.
-        There is no validtion or token generation. 
-        Please refer to full nanoleafapi for more info.
-        
-        :returns: True if auth tokeen is set, otherwise False
-        """
+        """Return True if an auth token has been provided."""
         return bool(self.auth_token)
 
+    # ------------------------------------------------------------------
+    # Internal request helper
+    # ------------------------------------------------------------------
 
-    #######################################################
-    ####                  IDENTIFY                     ####
-    #######################################################
+    def _request(self, method: str, path: str, **kwargs) -> requests.Response:
+        """Execute an HTTP request with timeouts and exception mapping.
 
-    def identify(self) -> bool:
-        """Runs the identify sequence on the lights
-        :returns: True if successful, otherwise False
+        All public methods route through here so timeout and error handling
+        are applied consistently.
+
+        :raises NanoleafConnectionError: on network failure or timeout
+        :raises NanoleafAuthError: on 401/403
+        :raises NanoleafRequestError: on other non-2xx HTTP status
         """
-        response = requests.put(self.url + "/identify")
-        return self.__error_check(response.status_code)
-    
+        kwargs.setdefault("timeout", (3, 5))
+        url = self.url + path
+        try:
+            response = requests.request(method, url, **kwargs)
+        except (RequestsConnectionError, Timeout) as exc:
+            raise NanoleafConnectionError(str(exc)) from exc
+        except RequestException as exc:
+            raise NanoleafConnectionError(str(exc)) from exc
+
+        if response.status_code in (200, 204):
+            return response
+        if response.status_code in (401, 403):
+            raise NanoleafAuthError(f"HTTP {response.status_code}: auth error")
+        raise NanoleafRequestError(f"HTTP {response.status_code}")
+
+    # ------------------------------------------------------------------
+    # Info
+    # ------------------------------------------------------------------
+
     def check_heartbeat(self) -> bool:
-        """Ensures there is a valid connection
-        :returns: True if alive, otherwise False
-        """
-        response = requests.get(self.url, timeout=5)
-        return self.__error_check(response.status_code)
+        """Return True if the lamp is reachable and responding."""
+        try:
+            self._request("GET", "")
+            return True
+        except NanoleafError:
+            return False
 
-    def get_info(self) -> Dict[str, Any]:
-        """Identification data, usefull for logs and debug
-        :returns: Dictionary of device information
+    def get_info(self) -> dict[str, Any]:
+        """Single GET to the device root. Returns full device info dict.
+
+        :raises NanoleafConnectionError: on network failure
+        :raises NanoleafAuthError: on auth failure
+        :raises NanoleafRequestError: on HTTP error
         """
-        response = requests.get(self.url)
+        response = self._request("GET", "")
         return json.loads(response.text)
-    
-    def get_fullLightStatus(self):
-        # lights on/off
-        # color mode
-        # brightmness
-        # saturation
-        # hue
-        # color temperature
-        #effect
-        return True
 
-    #######################################################
-    ####                    POWER                      ####
-    #######################################################
+    def get_full_state(self) -> dict[str, Any]:
+        """Return the lamp's current state using a single round-trip.
+
+        Extracts the 'state' subfield from get_info() and returns a flat dict:
+        {on, hue, sat, brightness, ct, colorMode}
+
+        :returns: dict with current state values, or {} on failure
+        """
+        try:
+            info = self.get_info()
+            state = info["state"]
+            return {
+                "on": state["on"]["value"],
+                "hue": state["hue"]["value"],
+                "sat": state["sat"]["value"],
+                "brightness": state["brightness"]["value"],
+                "ct": state["ct"]["value"],
+                "colorMode": state["colorMode"],
+            }
+        except NanoleafError:
+            return {}
+        except (KeyError, ValueError) as exc:
+            logger.warning("get_full_state: unexpected API response shape: %s", exc)
+            return {}
+
+    # ------------------------------------------------------------------
+    # Power
+    # ------------------------------------------------------------------
 
     def power_off(self) -> bool:
-        """Powers off the lights
-        :returns: True if successful, otherwise False
-        """
-        data = {"on" : {"value": False}}
-        response = requests.put(self.url + "/state", data=json.dumps(data))
-        return self.__error_check(response.status_code)
+        """Power off the lights."""
+        try:
+            self._request("PUT", "/state", data=json.dumps({"on": {"value": False}}))
+            return True
+        except NanoleafError:
+            return False
 
     def power_on(self) -> bool:
-        """Powers on the lights
-        :returns: True if successful, otherwise False
-        """
-        data = {"on" : {"value": True}}
-        response = requests.put(self.url + "/state", data=json.dumps(data))
-        return self.__error_check(response.status_code)
+        """Power on the lights."""
+        try:
+            self._request("PUT", "/state", data=json.dumps({"on": {"value": True}}))
+            return True
+        except NanoleafError:
+            return False
 
     def get_power(self) -> bool:
-        """Returns the power status of the lights
-        :returns: True if on, False if off
-        """
-        response = requests.get(self.url + "/state/on")
-        ans = json.loads(response.text)
-        return ans['value']
+        """Return True if the lights are on."""
+        try:
+            response = self._request("GET", "/state/on")
+            return json.loads(response.text)["value"]
+        except NanoleafError:
+            return False
 
-    def toggle_power(self) -> bool:
-        """Toggles the lights on/off"""
-        if self.get_power():
-            return self.power_off()
-        return self.power_on()
+    # ------------------------------------------------------------------
+    # Batched colour setters
+    # ------------------------------------------------------------------
 
-    #######################################################
-    ####               ADJUST BRIGHTNESS               ####
-    #######################################################
+    def set_hsb(self, hue: int, saturation: int, brightness: int, duration: int = 0) -> bool:
+        """Set hue, saturation, and brightness in a single batched PUT /state call.
 
-    def set_brightness(self, brightness : int, duration : int =0) -> bool:
-        """Sets the brightness of the lights
-
-        :param brightness: The required brightness (between 0 and 100)
-        :param duration: The duration over which to change the brightness
-
+        :param hue: 0–360
+        :param saturation: 0–100
+        :param brightness: 0–100
+        :param duration: transition duration in tenths of a second (0 = instant)
         :returns: True if successful, otherwise False
         """
-        if brightness > 100 or brightness < 0:
-            raise ValueError('Brightness should be between 0 and 100')
-        data = {"brightness" : {"value": brightness, "duration": duration}}
-        response = requests.put(self.url + "/state", data=json.dumps(data))
-        return self.__error_check(response.status_code)
+        if not 0 <= hue <= 360:
+            raise ValueError("Hue should be between 0 and 360")
+        if not 0 <= saturation <= 100:
+            raise ValueError("Saturation should be between 0 and 100")
+        if not 0 <= brightness <= 100:
+            raise ValueError("Brightness should be between 0 and 100")
+        data = {
+            "hue": {"value": hue},
+            "sat": {"value": saturation},
+            "brightness": {"value": brightness, "duration": duration},
+        }
+        try:
+            self._request("PUT", "/state", data=json.dumps(data))
+            return True
+        except NanoleafError:
+            return False
 
-    def increment_brightness(self, brightness : int) -> bool:
-        """Increments the brightness of the lights
+    def set_color_temp_and_brightness(self, ct: int, brightness: int, duration: int = 0) -> bool:
+        """Set colour temperature and brightness in a single batched PUT /state call.
 
-        :param brightness: How much to increment the brightness, can
-            also be negative
-
+        :param ct: colour temperature in Kelvin (1200–6500)
+        :param brightness: 0–100
+        :param duration: transition duration in tenths of a second (0 = instant)
         :returns: True if successful, otherwise False
         """
-        data = {"brightness" : {"increment": brightness}}
-        response = requests.put(self.url + "/state", data = json.dumps(data))
-        return self.__error_check(response.status_code)
+        if not 1200 <= ct <= 6500:
+            raise ValueError("Colour temp should be between 1200 and 6500")
+        if not 0 <= brightness <= 100:
+            raise ValueError("Brightness should be between 0 and 100")
+        data = {
+            "ct": {"value": ct},
+            "brightness": {"value": brightness, "duration": duration},
+        }
+        try:
+            self._request("PUT", "/state", data=json.dumps(data))
+            return True
+        except NanoleafError:
+            return False
 
-    def get_brightness(self) -> int:
-        """Returns the current brightness value of the lights"""
-        response = requests.get(self.url + "/state/brightness")
-        ans = json.loads(response.text)
-        return ans['value']
+    def set_color(self, rgb: tuple[int, int, int]) -> bool:
+        """Set the light colour from an RGB tuple via a batched /state call.
 
-    #######################################################
-    ####                    HUE                        ####
-    #######################################################
+        Converts RGB (0–255 per channel) to HSB using colorsys, then sends
+        a single batched PUT. Used primarily by party mode's --color option.
 
-    def set_hue(self, value : int) -> bool:
-        """Sets the hue of the lights
-
-        :param value: The required hue (between 0 and 360)
-
+        :param rgb: (r, g, b) tuple, each channel 0–255
         :returns: True if successful, otherwise False
         """
-        if value > 360 or value < 0:
-            raise ValueError('Hue should be between 0 and 360')
-        data = {"hue" : {"value" : value}}
-        response = requests.put(self.url + "/state", data=json.dumps(data))
-        return self.__error_check(response.status_code)
-
-    def increment_hue(self, value : int) -> bool:
-        """Increments the hue of the lights
-
-        :param value: How much to increment the hue, can also be negative
-
-        :returns: True if successful, otherwise False
-        """
-        data = {"hue" : {"increment" : value}}
-        response = requests.put(self.url + "/state", data=json.dumps(data))
-        return self.__error_check(response.status_code)
-
-    def get_hue(self) -> int:
-        """Returns the current hue value of the lights"""
-        response = requests.get(self.url + "/state/hue")
-        ans = json.loads(response.text)
-        return ans['value']
-
-    #######################################################
-    ####                 SATURATION                    ####
-    #######################################################
-
-    def set_saturation(self, value : int) -> bool:
-        """Sets the saturation of the lights
-
-        :param value: The required saturation (between 0 and 100)
-
-        :returns: True if successful, otherwise False
-        """
-        if value > 100 or value < 0:
-            raise ValueError('Saturation should be between 0 and 100')
-        data = {"sat" : {"value" : value}}
-        response = requests.put(self.url + "/state", data=json.dumps(data))
-        return self.__error_check(response.status_code)
-
-    def increment_saturation(self, value : int) -> bool:
-        """Increments the saturation of the lights
-
-        :param brightness: How much to increment the saturation, can also be
-            negative.
-
-        :returns: True if successful, otherwise False
-        """
-        data = {"sat" : {"increment" : value}}
-        response = requests.put(self.url + "/state", data=json.dumps(data))
-        return self.__error_check(response.status_code)
-
-    def get_saturation(self) -> int:
-        """Returns the current saturation value of the lights"""
-        response = requests.get(self.url + "/state/sat")
-        ans = json.loads(response.text)
-        return ans['value']
-
-    #######################################################
-    ####              COLOUR TEMPERATURE               ####
-    #######################################################
-
-    def set_color_temp(self, value : int) -> bool:
-        """Sets the white colour temperature of the lights
-
-        :param value: The required colour temperature (between 0 and 100)
-
-        :returns: True if successful, otherwise False
-        """
-        if value > 6500 or value < 1200:
-            raise ValueError('Colour temp should be between 1200 and 6500')
-        data = {"ct" : {"value" : value}}
-        response = requests.put(self.url + "/state", json.dumps(data))
-        return self.__error_check(response.status_code)
-
-    def increment_color_temp(self, value : int) -> bool:
-        """Sets the white colour temperature of the lights
-
-        :param value: How much to increment the colour temperature by, can also
-            be negative.
-
-        :returns: True if successful, otherwise False
-        """
-        data = {"ct" : {"increment" : value}}
-        response = requests.put(self.url + "/state", json.dumps(data))
-        return self.__error_check(response.status_code)
-
-    def get_color_temp(self) -> int:
-        """Returns the current colour temperature of the lights"""
-        response = requests.get(self.url + "/state/ct")
-        ans = json.loads(response.text)
-        return ans['value']
-
-    #######################################################
-    ####                 COLOUR MODE                   ####
-    #######################################################
-
-    def get_color_mode(self) -> str:
-        """Returns the colour mode of the lights"""
-        response = requests.get(self.url + "/state/colorMode")
-        return json.loads(response.text)
-
-    #######################################################
-    ####                   EFFECTS                     ####
-    #######################################################
-
-    def get_current_effect(self) -> str:
-        """Returns the currently selected effect
-
-        If the name of the effect isn't available, this will return
-        *Solid*, *Dynamic* or *Static* instead.
-
-        :returns: Name of the effect or type if unavailable.
-        """
-        response = requests.get(self.url + "/effects/select")
-        return json.loads(response.text)
-
-    def set_effect(self, effect_name : str) -> bool:
-        """Sets the effect of the lights
-
-        :param effect_name: The name of the effect
-
-        :returns: True if successful, otherwise False
-        """
-        data = {"select": effect_name}
-        response = requests.put(self.url + "/effects", data=json.dumps(data))
-        return self.__error_check(response.status_code)
-
-    def list_effects(self) -> List[str]:
-        """Returns a list of available effects"""
-        response = requests.get(self.url + "/effects/effectsList")
-        return json.loads(response.text)
+        r, g, b = rgb
+        if not all(0 <= c <= 255 for c in (r, g, b)):
+            raise ValueError("RGB channels must each be between 0 and 255")
+        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        return self.set_hsb(round(h * 360), round(s * 100), round(v * 100))

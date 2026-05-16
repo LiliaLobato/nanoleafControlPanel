@@ -14,14 +14,10 @@ AUTH_TOKEN = os.getenv('NANOLEAF_AUTH_TOKEN')
 
 print("hello world")
 
-debug = True
-pasillo = nanoleafLight.nanoleafLight(NAME,IP_ADDRESS,AUTH_TOKEN, full_debug = debug)
-
+pasillo = nanoleafLight.nanoleafLight(NAME, IP_ADDRESS, AUTH_TOKEN)
 
 print(pasillo)
 
-# validate pasillo is pingable
-# debug runs visible light sequence
-if ( pasillo.identify() if debug else pasillo.check_heartbeat() ):
+if pasillo.check_heartbeat():
     print("Im alive!")
     # we have a valid and live nanoleaf client
