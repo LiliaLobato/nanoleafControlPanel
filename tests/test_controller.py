@@ -494,6 +494,140 @@ class TestLateNightOverride:
 
 
 # ---------------------------------------------------------------------------
+# Party mode override handling
+# ---------------------------------------------------------------------------
+
+class TestPartyModeOverride:
+    def _run_with_state(self, state_in, now_dt):
+        """Run _run() with full mocking, return the saved state."""
+        from sunrise_sunset_controller import _run
+        from unittest.mock import patch, MagicMock
+
+        saved = {}
+
+        fake_light = MagicMock()
+        fake_light.get_full_state.return_value = {"on": False}
+        fake_light.set_hsb.return_value = True
+        fake_light.set_color_temp_and_brightness.return_value = True
+        fake_light.power_on.return_value = True
+        fake_light.power_off.return_value = True
+
+        with (
+            patch("sunrise_sunset_controller.load_state", return_value=state_in),
+            patch("sunrise_sunset_controller.save_state", lambda s: saved.update({"state": s})),
+            patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
+            patch("sunrise_sunset_controller.setup_logging"),
+            patch("sunrise_sunset_controller.get_weather", return_value=None),
+            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
+        ):
+            _run(now_dt)
+
+        return saved.get("state")
+
+    def test_manual_off_during_party_clears_party_no_dnd(self):
+        state = empty_state()
+        state["party_mode"] = {
+            "active": True,
+            "ends_at": dt(23, 30).isoformat(),  # 11:30pm — still in the future at 10pm
+            "fade_minutes": 30,
+            "profile": {"mode": "hsb", "hue": 280, "saturation": 90, "brightness": 100},
+        }
+        # Simulate: controller expected ON (party active), lamp is actually OFF
+        state["last_applied"] = {"power": True, "phase": "party_mode"}
+
+        fake_light = MagicMock()
+        fake_light.get_full_state.return_value = {"on": False}  # user turned it off
+        fake_light.set_hsb.return_value = True
+        fake_light.power_off.return_value = True
+
+        from sunrise_sunset_controller import _run
+        from unittest.mock import patch
+
+        saved = {}
+        with (
+            patch("sunrise_sunset_controller.load_state", return_value=state),
+            patch("sunrise_sunset_controller.save_state", lambda s: saved.update({"state": s})),
+            patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
+            patch("sunrise_sunset_controller.setup_logging"),
+            patch("sunrise_sunset_controller.get_weather", return_value=None),
+            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
+        ):
+            _run(dt(22, 0))  # party_mode phase (before hard_cutoff)
+
+        result = saved["state"]
+        assert result["party_mode"]["active"] is False
+        assert result["do_not_disturb_until"] is None  # no DND set
+
+    def test_party_cleared_when_morning_ramp_starts(self):
+        state = empty_state()
+        state["party_mode"] = {
+            "active": True,
+            "ends_at": dt(8, 0).isoformat(),  # extends past morning
+            "fade_minutes": 0,
+            "profile": {"mode": "hsb", "hue": 280, "saturation": 90, "brightness": 100},
+        }
+
+        fake_light = MagicMock()
+        fake_light.get_full_state.return_value = {"on": True}
+        fake_light.set_hsb.return_value = True
+        fake_light.set_color_temp_and_brightness.return_value = True
+        fake_light.power_on.return_value = True
+
+        from sunrise_sunset_controller import _run
+        from unittest.mock import patch
+
+        saved = {}
+        with (
+            patch("sunrise_sunset_controller.load_state", return_value=state),
+            patch("sunrise_sunset_controller.save_state", lambda s: saved.update({"state": s})),
+            patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
+            patch("sunrise_sunset_controller.setup_logging"),
+            patch("sunrise_sunset_controller.get_weather", return_value=None),
+            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
+        ):
+            _run(dt(6, 15))  # inside morning_ramp window
+
+        result = saved["state"]
+        assert result["party_mode"]["active"] is False
+        assert result["last_applied"]["phase"] == "morning_ramp"
+
+
+# ---------------------------------------------------------------------------
+# last_applied schema
+# ---------------------------------------------------------------------------
+
+class TestLastAppliedSchema:
+    def test_last_applied_uses_timestamp_key(self):
+        from sunrise_sunset_controller import _run
+        from unittest.mock import patch, MagicMock
+
+        saved = {}
+        fake_light = MagicMock()
+        fake_light.get_full_state.return_value = {"on": False}
+        fake_light.set_hsb.return_value = True
+        fake_light.set_color_temp_and_brightness.return_value = True
+        fake_light.power_on.return_value = True
+        fake_light.power_off.return_value = True
+
+        with (
+            patch("sunrise_sunset_controller.load_state", return_value=empty_state()),
+            patch("sunrise_sunset_controller.save_state", lambda s: saved.update({"state": s})),
+            patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
+            patch("sunrise_sunset_controller.setup_logging"),
+            patch("sunrise_sunset_controller.get_weather", return_value=None),
+            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
+        ):
+            _run(dt(14, 0))  # day phase
+
+        la = saved["state"]["last_applied"]
+        assert "timestamp" in la
+        assert "at" not in la
+        assert "phase" in la
+        assert "power" in la
+        assert "profile" in la
+
+
+# ---------------------------------------------------------------------------
 # Weather backoff
 # ---------------------------------------------------------------------------
 
