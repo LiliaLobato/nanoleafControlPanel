@@ -5,3 +5,5 @@ __pycache__/
 *.log
 *.tmp
 .env
+.claude
+.claude/*
