@@ -14,14 +14,15 @@ from typing import Any, Dict, Optional
 
 import requests
 from dotenv import load_dotenv
-from zoneinfo import ZoneInfo
 
-from noaa_solar import get_sun_elevation as _noaa_elevation, _julian_date
+from noaa_solar import get_sun_elevation as _noaa_elevation
 
-load_dotenv()
-LOCAL_TZ = ZoneInfo(os.getenv("TIMEZONE", "America/Los_Angeles"))
 
 # Condition codes that indicate reduced outdoor light
+class WeatherFetchError(Exception):
+    """Network or HTTP failure when calling the OpenWeather API."""
+
+
 _ADVERSE_CODE_RANGES = [
     (200, 299),  # Thunderstorm
     (300, 399),  # Drizzle
@@ -82,10 +83,16 @@ class OpenWeatherLight:
         self._init_from_raw(raw_data)
 
     def _fetch(self) -> Dict[str, Any]:
-        """Make the live API call and return raw JSON."""
-        response = requests.get(self.url, timeout=(3, 5))
-        response.raise_for_status()
-        return response.json()
+        """Make the live API call and return raw JSON.
+
+        :raises WeatherFetchError: on any network or HTTP failure
+        """
+        try:
+            response = requests.get(self.url, timeout=(3, 5))
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as exc:
+            raise WeatherFetchError(str(exc)) from exc
 
     def _init_from_raw(self, raw_data: Dict[str, Any]) -> None:
         """Populate all fields from a raw API response dict."""
@@ -131,26 +138,27 @@ class OpenWeatherLight:
 
     # --- Sunrise / sunset ---
 
-    def get_sunrise_dt(self) -> datetime:
-        """Sunrise as local tz-aware datetime."""
-        return datetime.fromtimestamp(self.timezone.sunrise_ts, tz=dt_timezone.utc).astimezone(LOCAL_TZ)
+    def get_sunrise_dt(self, tz: dt_timezone = dt_timezone.utc) -> datetime:
+        """Sunrise as a tz-aware datetime in the given timezone."""
+        return datetime.fromtimestamp(self.timezone.sunrise_ts, tz=dt_timezone.utc).astimezone(tz)
 
-    def get_sunset_dt(self) -> datetime:
-        """Sunset as local tz-aware datetime."""
-        return datetime.fromtimestamp(self.timezone.sunset_ts, tz=dt_timezone.utc).astimezone(LOCAL_TZ)
+    def get_sunset_dt(self, tz: dt_timezone = dt_timezone.utc) -> datetime:
+        """Sunset as a tz-aware datetime in the given timezone."""
+        return datetime.fromtimestamp(self.timezone.sunset_ts, tz=dt_timezone.utc).astimezone(tz)
 
     def get_adjusted_sunset(
         self,
         cloud_threshold: int = 60,
         offset_min: int = 30,
         offset_max: int = 75,
+        tz: dt_timezone = dt_timezone.utc,
     ) -> datetime:
         """Sunset adjusted earlier based on cloud cover %.
 
         Linear interpolation from offset_min (at threshold) to offset_max (at 100%).
         Returns raw sunset if cloud cover < threshold or no adverse conditions.
         """
-        sunset = self.get_sunset_dt()
+        sunset = self.get_sunset_dt(tz=tz)
         cloud_pct = self.weather.clouds
 
         if not self.has_adverse_conditions() or cloud_pct < cloud_threshold:

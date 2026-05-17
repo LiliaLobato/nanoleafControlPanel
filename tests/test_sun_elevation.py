@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from openWeather import _julian_date
+from noaa_solar import _julian_date
 from tests.conftest import _make_instance
 
 

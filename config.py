@@ -9,12 +9,41 @@ import logging
 from dataclasses import dataclass, field, fields
 from datetime import time
 from pathlib import Path
+from typing import Any
 
 from dateTime import parse_time
 
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path.home() / ".config" / "nanoleafControlPanel" / "config.json"
+
+
+def read_json_cached(path: Path, cache: dict, log: Any = None) -> dict:
+    """Read a JSON file with mtime-based caching.
+
+    On each call, checks the file's modification time. Returns the cached
+    dict if the file is unchanged; re-reads only when it has been modified.
+    Falls back to the last good cached data on read errors, so callers never
+    receive an empty dict due to a transient I/O failure.
+    """
+    if not path.exists():
+        return cache.get("data", {})
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return cache.get("data", {})
+    if mtime == cache.get("mtime"):
+        return cache["data"]
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        cache["mtime"] = mtime
+        cache["data"] = data
+        return data
+    except (json.JSONDecodeError, OSError) as exc:
+        if log:
+            log.warning("read_json_cached: could not read %s (%s)", path, exc)
+        return cache.get("data", {})
 
 
 # ---------------------------------------------------------------------------
@@ -108,22 +137,20 @@ OFF_PROFILE = LightProfile(mode="hsb", brightness=0)
 # Config loader
 # ---------------------------------------------------------------------------
 
+_config_cache: dict = {}
+
+
 def load_config() -> Config:
     """Return Config built from defaults overlaid with ~/.config/nanoleafControlPanel/config.json.
 
+    Uses mtime-based caching — re-reads the file only when it has been modified.
     Unknown keys (e.g. color_names/saturation_names used by describe_color in color_helper) are silently ignored here
     and read directly from the file by the functions that need them.
     Missing file or parse errors fall back to defaults.
     """
     config = Config()
-    if not CONFIG_PATH.exists():
-        return config
-
-    try:
-        with open(CONFIG_PATH) as f:
-            overrides = json.load(f)
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("load_config: could not read %s (%s) — using defaults", CONFIG_PATH, exc)
+    overrides = read_json_cached(CONFIG_PATH, _config_cache, logger)
+    if not overrides:
         return config
 
     valid_keys = {f.name for f in fields(Config)}
@@ -136,6 +163,6 @@ def load_config() -> Config:
                 value = parse_time(value)
             setattr(config, key, value)
         except (ValueError, TypeError) as exc:
-            logger.warning("load_config: invalid value for %s (%s) — keeping default", key, exc)
+            logger.warning("load_config: invalid value for %r (%s) — keeping default", key, exc)
 
     return config

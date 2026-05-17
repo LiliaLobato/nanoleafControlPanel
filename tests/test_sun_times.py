@@ -1,31 +1,21 @@
 """Tests for sunrise/sunset datetime methods and adjusted sunset logic."""
 
 import pytest
+from zoneinfo import ZoneInfo
 
 from openWeather import OpenWeatherLight
 from tests.conftest import _load_fixture, _make_instance, LAT, LON
+
+_PDT = ZoneInfo("America/Los_Angeles")
 
 
 class TestSunriseSunset:
     """All fixtures share the same timestamps: sunrise 1750504260, sunset 1750561860."""
 
-    def test_sunrise_and_sunset_are_tz_aware(self, clear):
-        """Both get_sunrise_dt() and get_sunset_dt() must return tz-aware datetimes."""
-        sunrise = clear.get_sunrise_dt()
-        sunset = clear.get_sunset_dt()
-        assert sunrise.tzinfo is not None, (
-            "Expected get_sunrise_dt() to return a tz-aware datetime, "
-            f"but tzinfo was None; the method must attach a timezone."
-        )
-        assert sunset.tzinfo is not None, (
-            "Expected get_sunset_dt() to return a tz-aware datetime, "
-            f"but tzinfo was None; the method must attach a timezone."
-        )
-
     def test_sunrise_and_sunset_correct_local_time(self, clear):
         """Sunrise: 2025-06-21 04:11 PDT. Sunset: 2025-06-21 20:11 PDT."""
-        sunrise = clear.get_sunrise_dt()
-        sunset = clear.get_sunset_dt()
+        sunrise = clear.get_sunrise_dt(tz=_PDT)
+        sunset = clear.get_sunset_dt(tz=_PDT)
 
         assert (sunrise.year, sunrise.month, sunrise.day) == (2025, 6, 21), (
             f"Expected sunrise date 2025-06-21, got {sunrise.date()}; "

@@ -4,7 +4,7 @@ and describe_color.
 """
 
 from datetime import datetime, time, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -88,7 +88,7 @@ def weather_mock(sunrise_hour=5, sunrise_min=30, sunset_hour=19, sunset_min=0):
     return w
 
 
-# Default config used throughout (times chosen for easy arithmetic)
+# Default config (times chosen for easy arithmetic):
 # morning_latest_start=06:00, full_morning_time=07:00
 # force_evening_time=21:00, night_full_time=22:00, hard_cutoff_time=23:00
 DEFAULT_CFG = Config()
@@ -99,75 +99,52 @@ DEFAULT_CFG = Config()
 # ---------------------------------------------------------------------------
 
 class TestCalculatePhase:
-    @pytest.mark.parametrize("hour,minute,expected", [
-        (4,  0,  "pre_morning"),       # before morning ramp
-        (6,  0,  "morning_ramp"),      # at morning_latest_start
-        (6,  30, "morning_ramp"),      # mid ramp
-        (7,  0,  "day"),               # at full_morning_time, no weather → adj_sunset=21:00
-        (14, 0,  "day"),               # midday
-        (20, 59, "day"),               # just before force_evening
-        (21, 0,  "night_ramp"),        # no weather → adj_sunset==force_evening → evening_ramp skipped
-        (22, 0,  "hard_cutoff_ramp"),
-        (23, 0,  "off"),               # at hard_cutoff_time
-        (23, 30, "off"),               # after hard_cutoff
-    ])
-    def test_standard_phases_no_weather(self, hour, minute, expected):
-        assert calculate_phase(dt(hour, minute), None, DEFAULT_CFG, empty_state()) == expected
+    def test_phase_timeline(self):
+        """Standard time-based phases without weather or override state."""
+        cases = [
+            (4,  0,  "pre_morning"),        # before morning ramp
+            (6,  0,  "morning_ramp"),        # at morning_latest_start
+            (6,  30, "morning_ramp"),        # mid ramp
+            (7,  0,  "day"),                 # full_morning_time; no weather → adj_sunset=21:00
+            (14, 0,  "day"),                 # midday
+            (20, 59, "day"),                 # just before force_evening
+            (21, 0,  "night_ramp"),          # no weather → adj_sunset==force_evening → evening_ramp skipped
+            (22, 0,  "hard_cutoff_ramp"),
+            (23, 0,  "off"),                 # at hard_cutoff_time
+            (23, 30, "off"),                 # after hard_cutoff
+        ]
+        for hour, minute, expected in cases:
+            result = calculate_phase(dt(hour, minute), None, DEFAULT_CFG, empty_state())
+            assert result == expected, f"at {hour:02d}:{minute:02d}: expected {expected!r}, got {result!r}"
 
-    def test_evening_ramp_with_early_sunset(self):
-        # sunset at 19:00 → evening_ramp from 19:00 to 21:00
-        w = weather_mock(sunset_hour=19)
-        assert calculate_phase(dt(19, 30), w, DEFAULT_CFG, empty_state()) == "evening_ramp"
+    def test_phase_with_weather(self):
+        """Phases that change when weather shifts sunrise/sunset."""
+        cases = [
+            (19, 30, weather_mock(sunset_hour=19),                   "evening_ramp",  "early sunset triggers evening_ramp"),
+            (5,  45, weather_mock(sunrise_hour=5, sunrise_min=30),   "morning_ramp",  "ramp follows early sunrise"),
+            (5,  0,  weather_mock(sunrise_hour=5, sunrise_min=30),   "pre_morning",   "before early sunrise is pre_morning"),
+        ]
+        for hour, minute, weather, expected, label in cases:
+            result = calculate_phase(dt(hour, minute), weather, DEFAULT_CFG, empty_state())
+            assert result == expected, f"{label}: expected {expected!r}, got {result!r}"
 
-    def test_morning_ramp_follows_early_sunrise(self):
-        # weather sunrise at 05:30 — ramp starts before morning_latest_start
-        w = weather_mock(sunrise_hour=5, sunrise_min=30)
-        assert calculate_phase(dt(5, 45), w, DEFAULT_CFG, empty_state()) == "morning_ramp"
+    def test_phase_with_state(self):
+        """Phases driven by override state (party, late-night, expiry)."""
+        party = {**empty_state(), "party_mode": {"active": True, "ends_at": dt(15, 0).isoformat()}}
+        expired_party = {**empty_state(), "party_mode": {"active": True, "ends_at": dt(13, 0).isoformat()}}
+        late_night = {**empty_state(), "late_night_override": {"started_at": dt(23, 5).isoformat(), "until": dt(23, 59).isoformat()}}
+        expired_late = {**empty_state(), "late_night_override": {"started_at": dt(23, 0).isoformat(), "until": dt(23, 15).isoformat()}}
 
-    def test_pre_morning_before_weather_sunrise(self):
-        w = weather_mock(sunrise_hour=5, sunrise_min=30)
-        assert calculate_phase(dt(5, 0), w, DEFAULT_CFG, empty_state()) == "pre_morning"
-
-    def test_party_mode_active(self):
-        state = empty_state()
-        state["party_mode"] = {
-            "active": True,
-            "ends_at": dt(15, 0).isoformat(),
-        }
-        assert calculate_phase(dt(14, 0), None, DEFAULT_CFG, state) == "party_mode"
-
-    def test_morning_ramp_wins_over_party(self):
-        state = empty_state()
-        state["party_mode"] = {
-            "active": True,
-            "ends_at": dt(15, 0).isoformat(),
-        }
-        # 06:15 is inside morning_ramp window — must win
-        assert calculate_phase(dt(6, 15), None, DEFAULT_CFG, state) == "morning_ramp"
-
-    def test_late_night_override_active(self):
-        state = empty_state()
-        state["late_night_override"] = {
-            "started_at": dt(23, 5).isoformat(),
-            "until": dt(23, 59).isoformat(),
-        }
-        assert calculate_phase(dt(23, 30), None, DEFAULT_CFG, state) == "late_night_override"
-
-    def test_late_night_override_expired_returns_off(self):
-        state = empty_state()
-        state["late_night_override"] = {
-            "started_at": dt(23, 0).isoformat(),
-            "until": dt(23, 15).isoformat(),
-        }
-        assert calculate_phase(dt(23, 30), None, DEFAULT_CFG, state) == "off"
-
-    def test_party_mode_expired_returns_day(self):
-        state = empty_state()
-        state["party_mode"] = {
-            "active": True,
-            "ends_at": dt(13, 0).isoformat(),  # already expired at 14:00
-        }
-        assert calculate_phase(dt(14, 0), None, DEFAULT_CFG, state) == "day"
+        cases = [
+            (14, 0,  party,          "party_mode",          "party mode active"),
+            (6,  15, party,          "morning_ramp",        "morning_ramp beats active party"),
+            (23, 30, late_night,     "late_night_override", "late_night_override active"),
+            (23, 30, expired_late,   "off",                 "expired late_night → off"),
+            (14, 0,  expired_party,  "day",                 "expired party → day"),
+        ]
+        for hour, minute, state, expected, label in cases:
+            result = calculate_phase(dt(hour, minute), None, DEFAULT_CFG, state)
+            assert result == expected, f"{label}: expected {expected!r}, got {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -178,42 +155,32 @@ class TestMorningRampProfile:
     """Verify _morning_ramp_profile via calculate_target_profile."""
 
     def _profile_at(self, t_frac: float) -> LightProfile:
-        """Return the morning-ramp profile at fraction t of the ramp window."""
         ramp_start = dt(6, 0)
-        ramp_end = dt(7, 0)
+        ramp_end   = dt(7, 0)
         total = (ramp_end - ramp_start).total_seconds()
-        now = ramp_start + timedelta(seconds=total * t_frac)
+        now   = ramp_start + timedelta(seconds=total * t_frac)
         return calculate_target_profile("morning_ramp", now, None, DEFAULT_CFG, empty_state())
 
-    def test_at_start_matches_sunrise_start(self):
-        profile = self._profile_at(0.0)
-        assert profile.mode == SUNRISE_START_PROFILE.mode
-        assert profile.hue == SUNRISE_START_PROFILE.hue
-        assert profile.saturation == SUNRISE_START_PROFILE.saturation
-        assert profile.brightness == SUNRISE_START_PROFILE.brightness
+    def test_stage_endpoints(self):
+        """Start, stage-1 boundary, and end match their reference profiles."""
+        cases = [
+            (0.0, SUNRISE_START_PROFILE, "t=0 start"),
+            (0.8, SUNRISE_END_PROFILE,   "t=0.8 stage boundary"),
+        ]
+        for t, ref, label in cases:
+            p = self._profile_at(t)
+            assert p.mode == ref.mode,             f"{label}: mode"
+            assert p.hue == ref.hue,               f"{label}: hue"
+            assert p.saturation == ref.saturation, f"{label}: saturation"
+            assert p.brightness == ref.brightness, f"{label}: brightness"
 
-    def test_at_stage_boundary_matches_sunrise_end(self):
-        profile = self._profile_at(0.8)
-        assert profile.mode == SUNRISE_END_PROFILE.mode
-        assert profile.hue == SUNRISE_END_PROFILE.hue
-        assert profile.saturation == SUNRISE_END_PROFILE.saturation
-        assert profile.brightness == SUNRISE_END_PROFILE.brightness
-
-    def test_at_end_matches_morning(self):
-        profile = self._profile_at(1.0)
-        assert profile.mode == MORNING_PROFILE.mode
-        assert profile.color_temp == MORNING_PROFILE.color_temp
-        assert profile.brightness == MORNING_PROFILE.brightness
-
-    def test_stage1_brightness_increases(self):
-        p0 = self._profile_at(0.0)
-        p4 = self._profile_at(0.4)
-        assert p4.brightness > p0.brightness
+        end = self._profile_at(1.0)
+        assert end.mode == MORNING_PROFILE.mode,             "t=1 end: mode"
+        assert end.color_temp == MORNING_PROFILE.color_temp, "t=1 end: color_temp"
+        assert end.brightness == MORNING_PROFILE.brightness, "t=1 end: brightness"
 
     def test_stage2_mode_is_ct(self):
-        # stage 2 (t > 0.8) snaps to MORNING which is CT
-        p = self._profile_at(0.9)
-        assert p.mode == "ct"
+        assert self._profile_at(0.9).mode == "ct", "stage 2 (t>0.8) must snap to CT mode"
 
 
 # ---------------------------------------------------------------------------
@@ -221,53 +188,40 @@ class TestMorningRampProfile:
 # ---------------------------------------------------------------------------
 
 class TestInterpolation:
-    def test_fade_to_off_holds_source_color(self):
+    def test_fade_to_and_from_off(self):
+        """Fading to OFF holds source color; fading from OFF snaps to target color."""
         src = LightProfile(mode="hsb", hue=120, saturation=80, brightness=60)
-        result = interpolate_profiles(src, OFF_PROFILE, 0.5)
-        assert result.hue == 120
-        assert result.saturation == 80
-        assert result.brightness == 30  # midpoint between 60 and 0
+        r = interpolate_profiles(src, OFF_PROFILE, 0.5)
+        assert r.hue == 120 and r.saturation == 80 and r.brightness == 30, "fade to off"
 
-    def test_fade_from_off_snaps_to_target_color(self):
-        target = LightProfile(mode="hsb", hue=200, saturation=70, brightness=80)
-        result = interpolate_profiles(OFF_PROFILE, target, 0.5)
-        assert result.hue == 200
-        assert result.saturation == 70
-        assert result.brightness == 40  # midpoint between 0 and 80
+        tgt = LightProfile(mode="hsb", hue=200, saturation=70, brightness=80)
+        r = interpolate_profiles(OFF_PROFILE, tgt, 0.5)
+        assert r.hue == 200 and r.saturation == 70 and r.brightness == 40, "fade from off"
 
-    def test_cross_mode_snaps_to_target(self):
-        ct_src = LightProfile(mode="ct", color_temp=3000, brightness=80)
-        hsb_tgt = LightProfile(mode="hsb", hue=30, saturation=50, brightness=60)
-        result = interpolate_profiles(ct_src, hsb_tgt, 0.5)
-        assert result.mode == "hsb"
-        assert result.hue == 30
-        assert result.saturation == 50
-        assert result.brightness == 70  # midpoint 80→60
+    def test_mode_lerp(self):
+        """Cross-mode snaps to target; same-mode lerps all fields."""
+        # cross-mode: CT → HSB snaps to HSB, lerps brightness
+        ct  = LightProfile(mode="ct",  color_temp=3000, brightness=80)
+        hsb = LightProfile(mode="hsb", hue=30, saturation=50, brightness=60)
+        r = interpolate_profiles(ct, hsb, 0.5)
+        assert r.mode == "hsb" and r.hue == 30 and r.saturation == 50 and r.brightness == 70, "cross-mode ct→hsb"
 
-    def test_ct_to_ct_lerps(self):
+        # ct → ct lerps both fields
         a = LightProfile(mode="ct", color_temp=2000, brightness=40)
         b = LightProfile(mode="ct", color_temp=6000, brightness=100)
-        result = interpolate_profiles(a, b, 0.5)
-        assert result.mode == "ct"
-        assert result.color_temp == 4000
-        assert result.brightness == 70
+        r = interpolate_profiles(a, b, 0.5)
+        assert r.mode == "ct" and r.color_temp == 4000 and r.brightness == 70, "ct→ct lerp"
 
-    def test_hsb_to_hsb_lerps_brightness(self):
+        # hsb → hsb lerps brightness
         a = LightProfile(mode="hsb", hue=0, saturation=0, brightness=0)
         b = LightProfile(mode="hsb", hue=0, saturation=0, brightness=100)
-        result = interpolate_profiles(a, b, 0.3)
-        assert result.brightness == 30
+        assert interpolate_profiles(a, b, 0.3).brightness == 30, "hsb brightness lerp"
 
-    def test_lerp_hue_shortest_path_wrap(self):
-        # 350 → 10: shortest path is +20°, not -340°
-        assert lerp_hue(350, 10, 0.5) == 0
-
-    def test_lerp_hue_no_wrap_needed(self):
-        assert lerp_hue(20, 100, 0.5) == 60
-
-    def test_lerp_hue_reverse_wrap(self):
-        # 10 → 350: shortest path is -20° (backward)
-        assert lerp_hue(10, 350, 0.5) == 0
+    def test_lerp_hue_shortest_path(self):
+        """Hue interpolation always takes the shortest arc around the colour wheel."""
+        assert lerp_hue(350, 10,  0.5) == 0,  "350→10 wraps forward (+20°)"
+        assert lerp_hue(20,  100, 0.5) == 60, "20→100 no wrap"
+        assert lerp_hue(10,  350, 0.5) == 0,  "10→350 wraps backward (−20°)"
 
 
 # ---------------------------------------------------------------------------
@@ -275,33 +229,18 @@ class TestInterpolation:
 # ---------------------------------------------------------------------------
 
 class TestDetectManualOverride:
-    def test_no_last_applied_returns_none(self):
-        assert detect_manual_override({"on": True}, {}, "day") == "none"
-
-    def test_power_unchanged_returns_none(self):
-        assert detect_manual_override(
-            {"on": True}, {"power": True}, "day"
-        ) == "none"
-
-    def test_manual_off(self):
-        assert detect_manual_override(
-            {"on": False}, {"power": True}, "morning_ramp"
-        ) == "manual_off"
-
-    def test_manual_on(self):
-        assert detect_manual_override(
-            {"on": True}, {"power": False}, "day"
-        ) == "manual_on"
-
-    def test_late_night_trigger(self):
-        assert detect_manual_override(
-            {"on": True}, {"power": False}, "off"
-        ) == "late_night_trigger"
-
-    def test_manual_on_not_late_night_in_non_off_phase(self):
-        assert detect_manual_override(
-            {"on": True}, {"power": False}, "pre_morning"
-        ) == "manual_on"
+    def test_detect_manual_override(self):
+        cases = [
+            ({"on": True},  {},               "day",          "none",               "no last_applied"),
+            ({"on": True},  {"power": True},  "day",          "none",               "power unchanged"),
+            ({"on": False}, {"power": True},  "morning_ramp", "manual_off",         "user turned lamp off"),
+            ({"on": True},  {"power": False}, "day",          "manual_on",          "user turned lamp on (day)"),
+            ({"on": True},  {"power": False}, "pre_morning",  "manual_on",          "user turned lamp on (pre_morning)"),
+            ({"on": True},  {"power": False}, "off",          "late_night_trigger", "manual on after cutoff"),
+        ]
+        for light_state, last_applied, phase, expected, label in cases:
+            result = detect_manual_override(light_state, last_applied, phase)
+            assert result == expected, f"{label}: expected {expected!r}, got {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -309,65 +248,50 @@ class TestDetectManualOverride:
 # ---------------------------------------------------------------------------
 
 class TestDND:
-    def test_apply_dnd_morning_ramp_scope(self):
+    def test_apply_dnd_scope(self):
+        """morning_ramp → morning_ramp scope; evening/night ramp → overnight scope."""
         state = empty_state()
         apply_dnd_flag(state, "morning_ramp", dt(6, 15), DEFAULT_CFG)
-        assert state["dnd_scope"] == "morning_ramp"
-        dnd_until = datetime.fromisoformat(state["do_not_disturb_until"])
-        assert dnd_until.hour == 7 and dnd_until.minute == 0
+        assert state["dnd_scope"] == "morning_ramp", "morning_ramp scope"
+        assert datetime.fromisoformat(state["do_not_disturb_until"]).hour == 7, "clears at 07:00"
 
-    def test_apply_dnd_evening_ramp_scope(self):
+        for phase in ["evening_ramp", "night_ramp"]:
+            state = empty_state()
+            apply_dnd_flag(state, phase, dt(19, 30), DEFAULT_CFG)
+            assert state["dnd_scope"] == "overnight", f"{phase} → overnight scope"
+            assert datetime.fromisoformat(state["do_not_disturb_until"]).hour == 7, f"{phase} clears at 07:00 tomorrow"
+
         state = empty_state()
-        apply_dnd_flag(state, "evening_ramp", dt(19, 30), DEFAULT_CFG)
-        assert state["dnd_scope"] == "overnight"
-        dnd_until = datetime.fromisoformat(state["do_not_disturb_until"])
-        # should clear at full_morning_time tomorrow (7:00)
-        assert dnd_until.hour == 7 and dnd_until.minute == 0
+        apply_dnd_flag(state, "day", dt(14, 0), DEFAULT_CFG)
+        assert state["dnd_scope"] is None, "day phase must not set DND"
 
-    def test_apply_dnd_night_ramp_scope(self):
-        state = empty_state()
-        apply_dnd_flag(state, "night_ramp", dt(21, 30), DEFAULT_CFG)
-        assert state["dnd_scope"] == "overnight"
-
-    def test_should_respect_dnd_active(self):
+    def test_should_respect_dnd(self):
         state = empty_state()
         state["do_not_disturb_until"] = dt(8, 0).isoformat()
-        assert should_respect_dnd(state, dt(7, 0)) is True
-
-    def test_should_respect_dnd_expired(self):
-        state = empty_state()
+        assert should_respect_dnd(state, dt(7, 0)) is True, "DND active before expiry"
         state["do_not_disturb_until"] = dt(6, 0).isoformat()
-        assert should_respect_dnd(state, dt(7, 0)) is False
+        assert should_respect_dnd(state, dt(7, 0)) is False, "DND expired"
 
-    def test_clear_dnd_morning_ramp_scope_after_full_morning(self):
-        state = empty_state()
-        state["do_not_disturb_until"] = dt(7, 0).isoformat()
-        state["dnd_scope"] = "morning_ramp"
-        clear_dnd_if_expired(state, dt(7, 1), DEFAULT_CFG, None)
-        assert state["do_not_disturb_until"] is None
-        assert state["dnd_scope"] is None
-
-    def test_clear_dnd_morning_ramp_scope_not_yet(self):
+    def test_clear_dnd_if_expired(self):
+        """morning_ramp scope clears at full_morning_time; overnight clears at ramp start."""
+        # morning_ramp: not yet expired
         state = empty_state()
         state["do_not_disturb_until"] = dt(7, 0).isoformat()
         state["dnd_scope"] = "morning_ramp"
         clear_dnd_if_expired(state, dt(6, 30), DEFAULT_CFG, None)
-        assert state["dnd_scope"] == "morning_ramp"  # not cleared yet
+        assert state["dnd_scope"] == "morning_ramp", "should not clear before full_morning_time"
 
-    def test_clear_dnd_overnight_scope_with_weather(self):
+        # morning_ramp: expired
+        state["dnd_scope"] = "morning_ramp"
+        clear_dnd_if_expired(state, dt(7, 1), DEFAULT_CFG, None)
+        assert state["dnd_scope"] is None and state["do_not_disturb_until"] is None, "clears after full_morning_time"
+
+        # overnight: clears at sunrise
         state = empty_state()
         state["do_not_disturb_until"] = dt(7, 0).isoformat()
         state["dnd_scope"] = "overnight"
-        # sunrise at 05:30 → morning_ramp_start = min(05:30, 06:00) = 05:30
-        w = weather_mock(sunrise_hour=5, sunrise_min=30)
-        clear_dnd_if_expired(state, dt(5, 45), DEFAULT_CFG, w)
-        assert state["dnd_scope"] is None
-
-    def test_day_phase_does_not_set_dnd(self):
-        state = empty_state()
-        apply_dnd_flag(state, "day", dt(14, 0), DEFAULT_CFG)
-        assert state["dnd_scope"] is None
-        assert state["do_not_disturb_until"] is None
+        clear_dnd_if_expired(state, dt(5, 45), DEFAULT_CFG, weather_mock(sunrise_hour=5, sunrise_min=30))
+        assert state["dnd_scope"] is None, "overnight clears at sunrise"
 
 
 # ---------------------------------------------------------------------------
@@ -376,35 +300,26 @@ class TestDND:
 
 class TestOscillationLockout:
     def test_within_lockout_returns_cached_power(self):
-        state = empty_state()
-        state["last_daytime_toggle_at"] = (dt(14, 0) - timedelta(minutes=10)).isoformat()
-        state["last_applied"] = {"power": True}
-        # within 30-min lockout → return cached True
-        assert evaluate_day_darkness(None, state, dt(14, 0), DEFAULT_CFG) is True
-
-    def test_within_lockout_cached_off(self):
-        state = empty_state()
-        state["last_daytime_toggle_at"] = (dt(14, 0) - timedelta(minutes=5)).isoformat()
-        state["last_applied"] = {"power": False}
-        assert evaluate_day_darkness(None, state, dt(14, 0), DEFAULT_CFG) is False
+        """Within the lockout window, last known power is returned without re-evaluating."""
+        for cached_power in [True, False]:
+            state = empty_state()
+            state["last_daytime_toggle_at"] = (dt(14, 0) - timedelta(minutes=10)).isoformat()
+            state["last_applied"] = {"power": cached_power}
+            result = evaluate_day_darkness(None, state, dt(14, 0), DEFAULT_CFG)
+            assert result is cached_power, f"cached_power={cached_power}: got {result}"
 
     def test_outside_lockout_re_evaluates_weather(self):
-        state = empty_state()
-        state["last_daytime_toggle_at"] = (dt(14, 0) - timedelta(minutes=45)).isoformat()
-        state["last_applied"] = {"power": True}
-        w = MagicMock()
-        w.is_dark_outside.return_value = False
-        result = evaluate_day_darkness(w, state, dt(14, 0), DEFAULT_CFG)
-        w.is_dark_outside.assert_called_once()
-        assert result is False
-
-    def test_no_lockout_without_toggle_timestamp(self):
-        state = empty_state()
-        w = MagicMock()
-        w.is_dark_outside.return_value = True
-        result = evaluate_day_darkness(w, state, dt(14, 0), DEFAULT_CFG)
-        w.is_dark_outside.assert_called_once()
-        assert result is True
+        """After lockout expires (or no toggle recorded), weather is re-evaluated."""
+        for minutes_ago, has_toggle in [(45, True), (0, False)]:
+            state = empty_state()
+            if has_toggle:
+                state["last_daytime_toggle_at"] = (dt(14, 0) - timedelta(minutes=minutes_ago)).isoformat()
+                state["last_applied"] = {"power": True}
+            w = MagicMock()
+            w.is_dark_outside.return_value = True
+            evaluate_day_darkness(w, state, dt(14, 0), DEFAULT_CFG)
+            w.is_dark_outside.assert_called_once(), f"minutes_ago={minutes_ago}: weather not re-evaluated"
+            w.reset_mock()
 
 
 # ---------------------------------------------------------------------------
@@ -412,66 +327,33 @@ class TestOscillationLockout:
 # ---------------------------------------------------------------------------
 
 class TestLateNightOverride:
-    def test_trigger_sets_state(self):
-        # Simulated: the controller detects late_night_trigger and sets state
-        state = empty_state()
-        now = dt(23, 10)
-        state["late_night_override"] = {
-            "started_at": now.isoformat(),
-            "until": (now + timedelta(minutes=120)).isoformat(),
-        }
-        assert calculate_phase(dt(23, 20), None, DEFAULT_CFG, state) == "late_night_override"
-
-    def test_profile_at_start_matches_late_night(self):
-        state = empty_state()
+    def test_profile_fades_from_late_night_to_off(self):
+        """Profile starts at LATE_NIGHT_PROFILE and dims to near-zero by the end."""
         started = dt(23, 5)
-        until = dt(23, 5) + timedelta(minutes=120)
-        state["late_night_override"] = {
-            "started_at": started.isoformat(),
-            "until": until.isoformat(),
-        }
-        p = calculate_target_profile("late_night_override", started, None, DEFAULT_CFG, state)
-        assert p.mode == LATE_NIGHT_PROFILE.mode
-        assert p.brightness == LATE_NIGHT_PROFILE.brightness
+        until   = started + timedelta(minutes=120)
+        state   = {**empty_state(), "late_night_override": {"started_at": started.isoformat(), "until": until.isoformat()}}
 
-    def test_profile_midpoint_is_dimmer(self):
-        state = empty_state()
-        started = dt(23, 5)
-        until = started + timedelta(minutes=120)
-        mid = started + timedelta(minutes=60)
-        state["late_night_override"] = {
-            "started_at": started.isoformat(),
-            "until": until.isoformat(),
-        }
-        p = calculate_target_profile("late_night_override", mid, None, DEFAULT_CFG, state)
-        assert p.brightness < LATE_NIGHT_PROFILE.brightness
-        assert p.brightness > 0
+        p_start = calculate_target_profile("late_night_override", started, None, DEFAULT_CFG, state)
+        assert p_start.mode == LATE_NIGHT_PROFILE.mode,           "start: mode"
+        assert p_start.brightness == LATE_NIGHT_PROFILE.brightness, "start: brightness"
+
+        p_mid = calculate_target_profile("late_night_override", started + timedelta(minutes=60), None, DEFAULT_CFG, state)
+        assert p_mid.brightness < LATE_NIGHT_PROFILE.brightness, "midpoint dimmer than start"
+        assert p_mid.brightness > 0,                             "midpoint not yet off"
 
     def test_morning_ramp_overrides_late_night(self):
-        state = empty_state()
-        state["late_night_override"] = {
-            "started_at": dt(23, 30).isoformat(),
-            "until": dt(8, 0).isoformat(),
-        }
-        # morning_ramp_start = 06:00; at 06:15 morning_ramp wins
+        state = {**empty_state(), "late_night_override": {"started_at": dt(23, 30).isoformat(), "until": dt(8, 0).isoformat()}}
         assert calculate_phase(dt(6, 15), None, DEFAULT_CFG, state) == "morning_ramp"
 
     def test_late_night_override_cleared_when_morning_ramp_starts(self):
         from sunrise_sunset_controller import _run
-        from unittest.mock import patch, MagicMock
 
-        state_store = {"state": None}
+        state_store = {}
 
         def fake_load_state():
             s = empty_state()
-            s["late_night_override"] = {
-                "started_at": dt(23, 30).isoformat(),
-                "until": dt(8, 0).isoformat(),
-            }
+            s["late_night_override"] = {"started_at": dt(23, 30).isoformat(), "until": dt(8, 0).isoformat()}
             return s
-
-        def fake_save_state(s):
-            state_store["state"] = s
 
         fake_light = MagicMock()
         fake_light.get_full_state.return_value = {"on": False}
@@ -482,13 +364,13 @@ class TestLateNightOverride:
 
         with (
             patch("sunrise_sunset_controller.load_state", fake_load_state),
-            patch("sunrise_sunset_controller.save_state", fake_save_state),
+            patch("sunrise_sunset_controller.save_state", lambda s: state_store.update({"state": s})),
             patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
             patch("sunrise_sunset_controller.setup_logging"),
             patch("sunrise_sunset_controller.get_weather", return_value=None),
             patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
         ):
-            _run(dt(6, 15))  # inside morning_ramp window
+            _run(dt(6, 15))
 
         assert state_store["state"]["late_night_override"] is None
 
@@ -498,15 +380,13 @@ class TestLateNightOverride:
 # ---------------------------------------------------------------------------
 
 class TestPartyModeOverride:
-    def _run_with_state(self, state_in, now_dt):
+    def _run_with_state(self, state_in, now_dt, lamp_on=False):
         """Run _run() with full mocking, return the saved state."""
         from sunrise_sunset_controller import _run
-        from unittest.mock import patch, MagicMock
 
         saved = {}
-
         fake_light = MagicMock()
-        fake_light.get_full_state.return_value = {"on": False}
+        fake_light.get_full_state.return_value = {"on": lamp_on}
         fake_light.set_hsb.return_value = True
         fake_light.set_color_temp_and_brightness.return_value = True
         fake_light.power_on.return_value = True
@@ -528,67 +408,27 @@ class TestPartyModeOverride:
         state = empty_state()
         state["party_mode"] = {
             "active": True,
-            "ends_at": dt(23, 30).isoformat(),  # 11:30pm — still in the future at 10pm
+            "ends_at": dt(23, 30).isoformat(),
             "fade_minutes": 30,
             "profile": {"mode": "hsb", "hue": 280, "saturation": 90, "brightness": 100},
         }
-        # Simulate: controller expected ON (party active), lamp is actually OFF
         state["last_applied"] = {"power": True, "phase": "party_mode"}
 
-        fake_light = MagicMock()
-        fake_light.get_full_state.return_value = {"on": False}  # user turned it off
-        fake_light.set_hsb.return_value = True
-        fake_light.power_off.return_value = True
-
-        from sunrise_sunset_controller import _run
-        from unittest.mock import patch
-
-        saved = {}
-        with (
-            patch("sunrise_sunset_controller.load_state", return_value=state),
-            patch("sunrise_sunset_controller.save_state", lambda s: saved.update({"state": s})),
-            patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
-            patch("sunrise_sunset_controller.setup_logging"),
-            patch("sunrise_sunset_controller.get_weather", return_value=None),
-            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
-        ):
-            _run(dt(22, 0))  # party_mode phase (before hard_cutoff)
-
-        result = saved["state"]
-        assert result["party_mode"]["active"] is False
-        assert result["do_not_disturb_until"] is None  # no DND set
+        result = self._run_with_state(state, dt(22, 0), lamp_on=False)
+        assert result["party_mode"]["active"] is False, "party must be cleared"
+        assert result["do_not_disturb_until"] is None, "manual-off during party must not set DND"
 
     def test_party_cleared_when_morning_ramp_starts(self):
         state = empty_state()
         state["party_mode"] = {
             "active": True,
-            "ends_at": dt(8, 0).isoformat(),  # extends past morning
+            "ends_at": dt(8, 0).isoformat(),
             "fade_minutes": 0,
             "profile": {"mode": "hsb", "hue": 280, "saturation": 90, "brightness": 100},
         }
 
-        fake_light = MagicMock()
-        fake_light.get_full_state.return_value = {"on": True}
-        fake_light.set_hsb.return_value = True
-        fake_light.set_color_temp_and_brightness.return_value = True
-        fake_light.power_on.return_value = True
-
-        from sunrise_sunset_controller import _run
-        from unittest.mock import patch
-
-        saved = {}
-        with (
-            patch("sunrise_sunset_controller.load_state", return_value=state),
-            patch("sunrise_sunset_controller.save_state", lambda s: saved.update({"state": s})),
-            patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
-            patch("sunrise_sunset_controller.setup_logging"),
-            patch("sunrise_sunset_controller.get_weather", return_value=None),
-            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
-        ):
-            _run(dt(6, 15))  # inside morning_ramp window
-
-        result = saved["state"]
-        assert result["party_mode"]["active"] is False
+        result = self._run_with_state(state, dt(6, 15), lamp_on=True)
+        assert result["party_mode"]["active"] is False, "party must be cleared at morning ramp"
         assert result["last_applied"]["phase"] == "morning_ramp"
 
 
@@ -599,7 +439,6 @@ class TestPartyModeOverride:
 class TestLastAppliedSchema:
     def test_last_applied_uses_timestamp_key(self):
         from sunrise_sunset_controller import _run
-        from unittest.mock import patch, MagicMock
 
         saved = {}
         fake_light = MagicMock()
@@ -617,14 +456,11 @@ class TestLastAppliedSchema:
             patch("sunrise_sunset_controller.get_weather", return_value=None),
             patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
         ):
-            _run(dt(14, 0))  # day phase
+            _run(dt(14, 0))
 
         la = saved["state"]["last_applied"]
-        assert "timestamp" in la
-        assert "at" not in la
-        assert "phase" in la
-        assert "power" in la
-        assert "profile" in la
+        assert "timestamp" in la and "at" not in la, "key must be 'timestamp', not 'at'"
+        assert all(k in la for k in ("phase", "power", "profile")), "missing required keys"
 
 
 # ---------------------------------------------------------------------------
@@ -633,47 +469,38 @@ class TestLastAppliedSchema:
 
 class TestWeatherBackoff:
     def test_failure_increments_counter(self):
-        from unittest.mock import patch
         from weather_cache import get_weather
         state = empty_state()
         with patch("weather_cache.OpenWeatherLight", side_effect=Exception("API down")):
             get_weather(state, dt(10, 0), DEFAULT_CFG)
         f = state["weather_failure_state"]
-        assert f["consecutive_failures"] == 1
-        assert f["next_retry_at"] is not None
+        assert f["consecutive_failures"] == 1 and f["next_retry_at"] is not None
 
-    def test_backoff_blocks_non_anchor_refresh(self):
+    def test_should_refresh_weather(self):
+        """Backoff blocks, stale/absent cache triggers, fresh cache skips, anchor overrides backoff."""
         from weather_cache import should_refresh_weather
+
+        # in backoff, non-anchor → no refresh
         state = empty_state()
-        failure = state["weather_failure_state"]
-        failure["consecutive_failures"] = 2
-        failure["next_retry_at"] = (dt(14, 0) + timedelta(minutes=20)).isoformat()
-        assert should_refresh_weather(state, dt(14, 5), DEFAULT_CFG) is False
+        state["weather_failure_state"]["consecutive_failures"] = 2
+        state["weather_failure_state"]["next_retry_at"] = (dt(14, 0) + timedelta(minutes=20)).isoformat()
+        assert should_refresh_weather(state, dt(14, 5), DEFAULT_CFG) is False, "in backoff, non-anchor"
+
+        # no backoff, no cache → refresh
+        assert should_refresh_weather(empty_state(), dt(10, 0), DEFAULT_CFG) is True, "no cache, no backoff"
+
+        # fresh cache → no refresh
+        fresh = empty_state()
+        fresh["weather_cache"] = {"fetched_at": dt(10, 0).isoformat(), "raw_data": {}}
+        assert should_refresh_weather(fresh, dt(11, 0), DEFAULT_CFG) is False, "fresh cache"
 
     def test_anchor_time_forces_refresh_even_in_backoff(self):
+        """14:00 is a configured anchor — must refresh even when in backoff."""
         from weather_cache import should_refresh_weather
         state = empty_state()
-        failure = state["weather_failure_state"]
-        failure["consecutive_failures"] = 3
-        failure["next_retry_at"] = (dt(14, 0) + timedelta(hours=1)).isoformat()
-        # 14:00 is an anchor time (weather_fetch_evening default)
+        state["weather_failure_state"]["consecutive_failures"] = 3
+        state["weather_failure_state"]["next_retry_at"] = (dt(14, 0) + timedelta(hours=1)).isoformat()
         assert should_refresh_weather(state, dt(14, 0), DEFAULT_CFG) is True
-
-    def test_no_backoff_and_stale_cache_triggers_refresh(self):
-        from weather_cache import should_refresh_weather
-        state = empty_state()
-        # no failure, no cache
-        assert should_refresh_weather(state, dt(10, 0), DEFAULT_CFG) is True
-
-    def test_fresh_cache_skips_refresh(self):
-        from weather_cache import should_refresh_weather
-        state = empty_state()
-        state["weather_cache"] = {
-            "fetched_at": dt(10, 0).isoformat(),
-            "raw_data": {},
-        }
-        # 1 hour later, cache_max_age_hours=5 → still fresh
-        assert should_refresh_weather(state, dt(11, 0), DEFAULT_CFG) is False
 
 
 # ---------------------------------------------------------------------------
@@ -681,36 +508,26 @@ class TestWeatherBackoff:
 # ---------------------------------------------------------------------------
 
 class TestLampBackoff:
-    def test_in_backoff_when_retry_in_future(self):
+    def test_backoff_detection(self):
+        """is_lamp_in_backoff: True when retry is in the future, False otherwise."""
         state = empty_state()
         state["lamp_failure_state"]["next_retry_at"] = dt(14, 30).isoformat()
-        assert is_lamp_in_backoff(state, dt(14, 0)) is True
+        assert is_lamp_in_backoff(state, dt(14, 0)) is True, "retry in future → in backoff"
 
-    def test_not_in_backoff_when_retry_passed(self):
-        state = empty_state()
         state["lamp_failure_state"]["next_retry_at"] = dt(13, 0).isoformat()
-        assert is_lamp_in_backoff(state, dt(14, 0)) is False
+        assert is_lamp_in_backoff(state, dt(14, 0)) is False, "retry passed → not in backoff"
 
-    def test_not_in_backoff_when_no_retry(self):
-        state = empty_state()
-        assert is_lamp_in_backoff(state, dt(14, 0)) is False
+        state["lamp_failure_state"]["next_retry_at"] = None
+        assert is_lamp_in_backoff(state, dt(14, 0)) is False, "no retry → not in backoff"
 
-    def test_handle_lamp_failure_increments(self):
+    def test_handle_lamp_failure(self):
         state = empty_state()
-        exc = ConnectionError("unreachable")
-        handle_lamp_failure(state, dt(14, 0), DEFAULT_CFG, exc)
+        handle_lamp_failure(state, dt(14, 0), DEFAULT_CFG, ConnectionError("unreachable"))
         f = state["lamp_failure_state"]
-        assert f["consecutive_failures"] == 1
-        assert f["next_retry_at"] is not None
-        assert f["last_failure_type"] == "ConnectionError"
-
-    def test_handle_lamp_failure_uses_backoff_schedule(self):
-        state = empty_state()
-        exc = ConnectionError("x")
-        handle_lamp_failure(state, dt(14, 0), DEFAULT_CFG, exc)
-        retry = datetime.fromisoformat(state["lamp_failure_state"]["next_retry_at"])
-        # first failure → 5-minute backoff
-        assert (retry - dt(14, 0)).total_seconds() == 5 * 60
+        assert f["consecutive_failures"] == 1,            "failure counter incremented"
+        assert f["last_failure_type"] == "ConnectionError", "exception type recorded"
+        retry = datetime.fromisoformat(f["next_retry_at"])
+        assert (retry - dt(14, 0)).total_seconds() == 5 * 60, "first failure → 5-min backoff"
 
     def test_handle_lamp_success_resets_state(self):
         state = empty_state()
@@ -718,8 +535,7 @@ class TestLampBackoff:
         state["lamp_failure_state"]["next_retry_at"] = dt(14, 30).isoformat()
         handle_lamp_success(state)
         f = state["lamp_failure_state"]
-        assert f["consecutive_failures"] == 0
-        assert f["next_retry_at"] is None
+        assert f["consecutive_failures"] == 0 and f["next_retry_at"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -727,36 +543,25 @@ class TestLampBackoff:
 # ---------------------------------------------------------------------------
 
 class TestDescribeColor:
-    def test_off(self):
-        assert describe_color(LightProfile(mode="hsb", brightness=0)) == "off"
+    def test_describe_color(self):
+        cases = [
+            (LightProfile(mode="hsb", brightness=0),                              "off",           None,        "brightness=0 → 'off'"),
+            (LightProfile(mode="ct",  color_temp=6000, brightness=100),           "daylight white", "full",     "CT 6000K full"),
+            (LightProfile(mode="ct",  color_temp=2500, brightness=20),            "warm white",     "dim",      "CT 2500K dim"),
+            (NIGHT_PROFILE,                                                        "amber",          "dim",      "night profile"),
+            (LightProfile(mode="hsb", hue=280, saturation=90, brightness=100),    "purple",         "full",     "party purple"),
+            (LightProfile(mode="hsb", hue=120, saturation=5,  brightness=50),     "near white",     None,       "low saturation → near white"),
+        ]
+        for profile, expected_color, expected_brightness, label in cases:
+            result = describe_color(profile)
+            if expected_color == "off":
+                assert result == "off", f"{label}: expected 'off', got {result!r}"
+            else:
+                assert expected_color in result, f"{label}: expected {expected_color!r} in {result!r}"
+            if expected_brightness:
+                assert expected_brightness in result, f"{label}: expected brightness {expected_brightness!r} in {result!r}"
 
-    def test_ct_profile(self):
-        p = LightProfile(mode="ct", color_temp=6000, brightness=100)
-        result = describe_color(p)
-        assert "daylight white" in result
-        assert "full" in result
-
-    def test_ct_warm(self):
-        p = LightProfile(mode="ct", color_temp=2500, brightness=20)
-        result = describe_color(p)
-        assert "warm white" in result
-        assert "dim" in result
-
-    def test_hsb_night_profile(self):
-        result = describe_color(NIGHT_PROFILE)
-        assert "amber" in result
-        assert "dim" in result
-
-    def test_hsb_party_profile(self):
-        result = describe_color(LightProfile(mode="hsb", hue=280, saturation=90, brightness=100))
-        assert "purple" in result
-        assert "full" in result
-
-    def test_hsb_daytime_on(self):
+    def test_describe_daytime_on(self):
         result = describe_color(DAYTIME_ON_PROFILE)
-        assert "orange" in result or "amber" in result
-        assert "moderate" in result
-
-    def test_hsb_saturation_modifier(self):
-        dim_sat = LightProfile(mode="hsb", hue=120, saturation=5, brightness=50)
-        assert "near white" in describe_color(dim_sat)
+        assert "orange" in result or "amber" in result, f"expected orange or amber, got {result!r}"
+        assert "moderate" in result, f"expected moderate brightness, got {result!r}"

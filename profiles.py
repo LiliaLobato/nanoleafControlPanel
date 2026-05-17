@@ -36,7 +36,7 @@ def _phase_t(now: datetime, start: datetime, end: datetime) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Morning ramp (Task 9)
+# Morning ramp
 # ---------------------------------------------------------------------------
 
 def _morning_ramp_profile(
@@ -50,7 +50,7 @@ def _morning_ramp_profile(
     Stage 2 (last  20% of ramp): SUNRISE_END   → MORNING       (cross-mode CT snap)
     """
     if weather:
-        ramp_start = min(weather.get_sunrise_dt(), combine(now, config.morning_latest_start))
+        ramp_start = min(weather.get_sunrise_dt(tz=now.tzinfo), combine(now, config.morning_latest_start))
     else:
         ramp_start = combine(now, config.morning_latest_start)
     ramp_end = combine(now, config.full_morning_time)
@@ -68,7 +68,7 @@ def _morning_ramp_profile(
 
 
 # ---------------------------------------------------------------------------
-# Target and effective color profiles (Task 7)
+# Target and effective color profiles
 # ---------------------------------------------------------------------------
 
 def calculate_target_profile(
@@ -188,17 +188,14 @@ def apply_profile(
 
 def calculate_effective_color_profile(
     phase: str,
-    now: datetime,
-    weather: Optional[OpenWeatherLight],
-    config: Config,
-    state: dict,
+    target: Optional[LightProfile],
 ) -> LightProfile:
     """Return the color profile to pre-stage on every cron tick.
 
-    Always returns a profile (never None) so the lamp retains the correct
-    color even while powered off, making the next manual-on instant.
+    Accepts the pre-computed target (possibly None) and applies the
+    fallback rule: always returns a profile so the lamp retains the
+    correct color even while powered off, making the next manual-on instant.
     """
-    target = calculate_target_profile(phase, now, weather, config, state)
     if target is not None:
         return target
     if phase == "day":

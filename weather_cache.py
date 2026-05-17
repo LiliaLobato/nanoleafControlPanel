@@ -107,7 +107,7 @@ def get_weather(state: dict, now: datetime, config: Config) -> Optional[OpenWeat
 
 
 # ---------------------------------------------------------------------------
-# Day-phase darkness evaluation with oscillation lockout (Task 11)
+# Day-phase darkness evaluation with oscillation lockout
 # ---------------------------------------------------------------------------
 
 def evaluate_day_darkness(

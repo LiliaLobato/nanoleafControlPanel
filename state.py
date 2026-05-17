@@ -23,6 +23,10 @@ STATE_PATH = STATE_DIR / "state.json"
 LOCK_PATH  = STATE_DIR / "controller.lock"
 
 
+def _ensure_state_dir() -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
 # ---------------------------------------------------------------------------
 # State file
 # ---------------------------------------------------------------------------
@@ -56,7 +60,7 @@ def load_state() -> dict:
 
     Also ensures STATE_DIR exists so the rest of the controller can write freely.
     """
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_state_dir()
     if not STATE_PATH.exists():
         return _empty_state()
     try:
@@ -69,7 +73,7 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     """Atomically write state to disk via a temp file + os.replace()."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_state_dir()
     tmp = STATE_PATH.parent / (STATE_PATH.name + ".tmp")
     with open(tmp, "w") as f:
         json.dump(state, f, indent=2, default=str)
@@ -87,14 +91,14 @@ def acquire_run_lock() -> filelock.FileLock:
     another instance of the controller is already running, so the caller can
     exit silently without waiting.
     """
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_state_dir()
     lock = filelock.FileLock(str(LOCK_PATH), timeout=0)
     lock.acquire()
     return lock
 
 
 # ---------------------------------------------------------------------------
-# DND management (Task 12)
+# DND management
 # ---------------------------------------------------------------------------
 
 def apply_dnd_flag(state: dict, phase: str, now: datetime, config: Config) -> None:
@@ -154,7 +158,7 @@ def clear_dnd_if_expired(
 
 
 # ---------------------------------------------------------------------------
-# Lamp failure backoff (Task 13)
+# Lamp failure backoff
 # ---------------------------------------------------------------------------
 
 def is_lamp_in_backoff(state: dict, now: datetime) -> bool:

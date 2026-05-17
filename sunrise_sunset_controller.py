@@ -79,7 +79,7 @@ def calculate_phase(
         off / late_night_override → [hard_cutoff_time, ...)
     """
     if weather:
-        sunrise_dt = weather.get_sunrise_dt()
+        sunrise_dt = weather.get_sunrise_dt(tz=now.tzinfo)
         morning_ramp_start = min(
             sunrise_dt,
             combine(now, config.morning_latest_start),
@@ -88,6 +88,7 @@ def calculate_phase(
             config.cloud_threshold,
             config.adverse_offset_min,
             config.adverse_offset_max,
+            tz=now.tzinfo,
         )
     else:
         morning_ramp_start = combine(now, config.morning_latest_start)
@@ -179,7 +180,7 @@ def _run(now: Optional[datetime] = None) -> None:
 
     # --- Profiles and power intent ----------------------------------------
     target_profile = calculate_target_profile(phase, now, weather, config, state)
-    effective_color = calculate_effective_color_profile(phase, now, weather, config, state)
+    effective_color = calculate_effective_color_profile(phase, target_profile)
     dnd_active = should_respect_dnd(state, now)
     should_be_on = target_profile is not None and not dnd_active
 
@@ -252,7 +253,7 @@ def _run(now: Optional[datetime] = None) -> None:
         }
         phase = "late_night_override"
         target_profile = calculate_target_profile(phase, now, weather, config, state)
-        effective_color = calculate_effective_color_profile(phase, now, weather, config, state)
+        effective_color = calculate_effective_color_profile(phase, target_profile)
         should_be_on = True
         logger.info(
             "Late-night override triggered — until %s",

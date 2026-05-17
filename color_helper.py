@@ -4,10 +4,9 @@ describe_color() helper: translates a LightProfile into a human-readable
 description used by CLI messages and verbose controller logs.
 """
 
-import json
 import logging
 
-from config import CONFIG_PATH, LightProfile
+from config import CONFIG_PATH, LightProfile, read_json_cached
 
 logger = logging.getLogger(__name__)
 
@@ -53,21 +52,17 @@ _CT_DEFAULTS = [
 ]
 
 
+_overrides_cache: dict = {}
+
+
 def _load_overrides() -> dict:
-    """Read color/saturation/brightness name overrides from config.json."""
-    if not CONFIG_PATH.exists():
-        return {}
-    try:
-        with open(CONFIG_PATH) as f:
-            data = json.load(f)
-        return {
-            "color_names":      data.get("color_names", {}),
-            "saturation_names": data.get("saturation_names", {}),
-            "brightness_names": data.get("brightness_names", {}),
-        }
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("color_helper: could not read config overrides (%s)", exc)
-        return {}
+    """Return color/saturation/brightness name overrides from config.json, mtime-cached."""
+    data = read_json_cached(CONFIG_PATH, _overrides_cache, logger)
+    return {
+        "color_names":      data.get("color_names", {}),
+        "saturation_names": data.get("saturation_names", {}),
+        "brightness_names": data.get("brightness_names", {}),
+    }
 
 
 def _lookup(value: int, defaults: list, overrides: dict) -> str:
