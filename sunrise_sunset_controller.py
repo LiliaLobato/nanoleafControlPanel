@@ -203,7 +203,7 @@ def _run(now: Optional[datetime] = None) -> None:
     # --- Lamp contact ----------------------------------------------------
     light = nanoleafLight(
         os.getenv("NANOLEAF_NAME", "Nanoleaf"),
-        os.getenv("NANOLEAF_IP", ""),
+        os.getenv("NANOLEAF_IP_ADDRESS", ""),
         os.getenv("NANOLEAF_AUTH_TOKEN", ""),
     )
     light_state = light.get_full_state()
