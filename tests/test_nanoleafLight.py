@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests as requests_lib
 
-from nanoleafLight import (
+from nanoleaf.nanoleafLight import (
     nanoleafLight,
     NanoleafAuthError,
     NanoleafConnectionError,

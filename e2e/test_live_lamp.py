@@ -20,7 +20,7 @@ pytestmark = pytest.mark.skipif(not RUN_E2E, reason="Set RUN_E2E=1 to run live l
 
 @pytest.fixture(scope="module")
 def light():
-    from nanoleafLight import nanoleafLight
+    from nanoleaf.nanoleafLight import nanoleafLight
 
     name = os.environ["NANOLEAF_NAME"]
     ip = os.environ["NANOLEAF_IP_ADDRESS"]

@@ -3,7 +3,7 @@
 import pytest
 from zoneinfo import ZoneInfo
 
-from openWeather import OpenWeatherLight
+from weather.openWeather import OpenWeatherLight
 from tests.conftest import _load_fixture, _make_instance, LAT, LON
 
 _PDT = ZoneInfo("America/Los_Angeles")

@@ -9,9 +9,9 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
-from openWeather import OpenWeatherLight
+from weather.openWeather import OpenWeatherLight
 
-from config import Config
+from controller.config import Config
 
 logger = logging.getLogger(__name__)
 

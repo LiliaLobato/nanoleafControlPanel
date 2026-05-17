@@ -18,18 +18,18 @@ from zoneinfo import ZoneInfo
 import filelock
 from dotenv import load_dotenv
 
-from color_helper import describe_color
-from config import Config, load_config
-from dateTime import combine
-from log_setup import setup_logging
-from nanoleafLight import nanoleafLight, NanoleafConnectionError
-from openWeather import OpenWeatherLight
-from profiles import (
+from nanoleaf.color_helper import describe_color
+from controller.config import Config, load_config
+from controller.dateTime import combine
+from controller.log_setup import setup_logging
+from nanoleaf.nanoleafLight import nanoleafLight, NanoleafConnectionError
+from weather.openWeather import OpenWeatherLight
+from controller.profiles import (
     apply_profile,
     calculate_effective_color_profile,
     calculate_target_profile,
 )
-from state import (
+from controller.state import (
     acquire_run_lock,
     apply_dnd_flag,
     clear_dnd_if_expired,
@@ -41,7 +41,7 @@ from state import (
     save_state,
     should_respect_dnd,
 )
-from weather_cache import get_weather
+from weather.weather_cache import get_weather
 
 load_dotenv()
 

@@ -6,7 +6,7 @@ description used by CLI messages and verbose controller logs.
 
 import logging
 
-from config import CONFIG_PATH, LightProfile, read_json_cached
+from controller.config import CONFIG_PATH, LightProfile, read_json_cached
 
 logger = logging.getLogger(__name__)
 

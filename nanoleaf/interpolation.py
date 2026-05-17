@@ -3,7 +3,7 @@
 Pure math interpolation helpers for the Nanoleaf controller.
 """
 
-from config import LightProfile
+from controller.config import LightProfile
 
 
 def _lerp(a: float, b: float, t: float) -> float:

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openWeather import OpenWeatherLight
+from weather.openWeather import OpenWeatherLight
 from tests.conftest import _load_fixture, LAT, LON
 
 
@@ -12,7 +12,7 @@ class TestFromCache:
     def test_no_network_call(self):
         """from_cache must NOT make any HTTP requests."""
         raw = _load_fixture("clear.json")
-        with patch("openWeather.requests.get") as mock_get:
+        with patch("weather.openWeather.requests.get") as mock_get:
             w = OpenWeatherLight.from_cache(raw, LAT, LON)
             mock_get.assert_not_called()
         assert w.is_valid is True, (
@@ -31,7 +31,7 @@ class TestFromCache:
         mock_response = MagicMock()
         mock_response.json.return_value = raw
         mock_response.raise_for_status = MagicMock()
-        with patch("openWeather.requests.get", return_value=mock_response):
+        with patch("weather.openWeather.requests.get", return_value=mock_response):
             live = OpenWeatherLight(LAT, LON, auth_token="fake")
 
         assert cached.timestamp == live.timestamp, (
@@ -113,7 +113,7 @@ class TestConstructor:
         mock_response = MagicMock()
         mock_response.json.return_value = raw
         mock_response.raise_for_status = MagicMock()
-        with patch("openWeather.requests.get", return_value=mock_response) as mock_get:
+        with patch("weather.openWeather.requests.get", return_value=mock_response) as mock_get:
             w = OpenWeatherLight(LAT, LON, auth_token="test_token")
             mock_get.assert_called_once()
 
@@ -139,7 +139,7 @@ class TestConstructor:
         mock_response = MagicMock()
         mock_response.json.return_value = raw
         mock_response.raise_for_status = MagicMock()
-        with patch("openWeather.requests.get", return_value=mock_response) as mock_get:
+        with patch("weather.openWeather.requests.get", return_value=mock_response) as mock_get:
             OpenWeatherLight(LAT, LON, auth_token="test")
             call_kwargs = mock_get.call_args
             assert call_kwargs.kwargs["timeout"] == (3, 5), (

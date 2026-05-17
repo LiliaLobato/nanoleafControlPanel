@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from config import (
+from controller.config import (
     Config,
     LightProfile,
     SUNRISE_START_PROFILE,
@@ -21,10 +21,10 @@ from config import (
     PARTY_PROFILE,
     OFF_PROFILE,
 )
-from dateTime import combine
-from interpolation import interpolate_profiles
-from openWeather import OpenWeatherLight
-from weather_cache import evaluate_day_darkness
+from controller.dateTime import combine
+from nanoleaf.interpolation import interpolate_profiles
+from weather.openWeather import OpenWeatherLight
+from weather.weather_cache import evaluate_day_darkness
 
 logger = logging.getLogger(__name__)
 

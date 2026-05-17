@@ -9,7 +9,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from config import Config
+from controller.config import Config
 
 LOG_DIR  = Path.home() / ".local" / "state" / "nanoleafControlPanel"
 LOG_PATH = LOG_DIR / "nanoleaf.log"

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from openWeather import OpenWeatherLight
+from weather.openWeather import OpenWeatherLight
 from tests.conftest import _load_fixture, _make_instance, LAT, LON
 
 # Shared datetimes used across tests

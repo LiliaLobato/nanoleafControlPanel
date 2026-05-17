@@ -9,8 +9,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from color_helper import describe_color
-from config import (
+from nanoleaf.color_helper import describe_color
+from controller.config import (
     Config,
     LightProfile,
     DAYTIME_ON_PROFILE,
@@ -21,12 +21,12 @@ from config import (
     SUNRISE_END_PROFILE,
     SUNRISE_START_PROFILE,
 )
-from interpolation import interpolate_profiles, lerp_hue
-from profiles import (
+from nanoleaf.interpolation import interpolate_profiles, lerp_hue
+from controller.profiles import (
     calculate_effective_color_profile,
     calculate_target_profile,
 )
-from state import (
+from controller.state import (
     apply_dnd_flag,
     clear_dnd_if_expired,
     detect_manual_override,
@@ -36,7 +36,7 @@ from state import (
     should_respect_dnd,
 )
 from sunrise_sunset_controller import calculate_phase
-from weather_cache import evaluate_day_darkness
+from weather.weather_cache import evaluate_day_darkness
 
 UTC = ZoneInfo("UTC")
 
@@ -469,16 +469,16 @@ class TestLastAppliedSchema:
 
 class TestWeatherBackoff:
     def test_failure_increments_counter(self):
-        from weather_cache import get_weather
+        from weather.weather_cache import get_weather
         state = empty_state()
-        with patch("weather_cache.OpenWeatherLight", side_effect=Exception("API down")):
+        with patch("weather.weather_cache.OpenWeatherLight", side_effect=Exception("API down")):
             get_weather(state, dt(10, 0), DEFAULT_CFG)
         f = state["weather_failure_state"]
         assert f["consecutive_failures"] == 1 and f["next_retry_at"] is not None
 
     def test_should_refresh_weather(self):
         """Backoff blocks, stale/absent cache triggers, fresh cache skips, anchor overrides backoff."""
-        from weather_cache import should_refresh_weather
+        from weather.weather_cache import should_refresh_weather
 
         # in backoff, non-anchor → no refresh
         state = empty_state()
@@ -496,7 +496,7 @@ class TestWeatherBackoff:
 
     def test_anchor_time_forces_refresh_even_in_backoff(self):
         """14:00 is a configured anchor — must refresh even when in backoff."""
-        from weather_cache import should_refresh_weather
+        from weather.weather_cache import should_refresh_weather
         state = empty_state()
         state["weather_failure_state"]["consecutive_failures"] = 3
         state["weather_failure_state"]["next_retry_at"] = (dt(14, 0) + timedelta(hours=1)).isoformat()

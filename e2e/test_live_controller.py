@@ -54,7 +54,7 @@ def _make_weather(
     fixture:      str = "clear.json",
 ):
     """Build an OpenWeatherLight with today's sunrise/sunset stamped in."""
-    from openWeather import OpenWeatherLight
+    from weather.openWeather import OpenWeatherLight
     today      = datetime.now(tz=LOCAL_TZ)
     sunrise_dt = today.replace(hour=sunrise_hour, minute=sunrise_min, second=0, microsecond=0)
     sunset_dt  = today.replace(hour=sunset_hour,  minute=sunset_min,  second=0, microsecond=0)
@@ -77,7 +77,7 @@ def _now_at(hour: int, minute: int = 0) -> datetime:
 @pytest.fixture(scope="module")
 def light():
     """Real nanoleafLight instance, verified reachable before any test runs."""
-    from nanoleafLight import nanoleafLight
+    from nanoleaf.nanoleafLight import nanoleafLight
     lamp = nanoleafLight(
         name=os.environ["NANOLEAF_NAME"],
         ip=os.environ["NANOLEAF_IP_ADDRESS"],
@@ -90,7 +90,7 @@ def light():
 @pytest.fixture(autouse=True)
 def isolated_state(tmp_path, monkeypatch):
     """Redirect state.json to a temp directory so tests never touch real state."""
-    import state as state_mod
+    import controller.state as state_mod
     monkeypatch.setattr(state_mod, "STATE_DIR",  tmp_path)
     monkeypatch.setattr(state_mod, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(state_mod, "LOCK_PATH",  tmp_path / "controller.lock")
@@ -116,7 +116,7 @@ def test_evening_ramp_profile_reaches_lamp(monkeypatch, light):
       calculate_phase → calculate_target_profile → apply_profile → lamp.
     """
     import sunrise_sunset_controller as ctrl
-    from config import DAYTIME_ON_PROFILE
+    from controller.config import DAYTIME_ON_PROFILE
 
     # sunset at 20:00; 20:30 → past sunset, before force_evening (21:00) → evening_ramp
     weather = _make_weather(sunrise_hour=5, sunset_hour=20)
@@ -156,12 +156,12 @@ def test_prestaging_while_off(monkeypatch, light):
     validated at the API layer by test_live_lamp.py::test_color_while_off_prestaging.
     """
     import sunrise_sunset_controller as ctrl
-    from config import DAYTIME_ON_PROFILE
+    from controller.config import DAYTIME_ON_PROFILE
 
     weather = _make_weather(sunrise_hour=5, sunset_hour=20, fixture="clear.json")
     monkeypatch.setattr(ctrl, "get_weather", lambda *_a, **_kw: weather)
     # Force "light outside" so the day phase keeps the lamp off.
-    monkeypatch.setattr("profiles.evaluate_day_darkness", lambda *_a, **_kw: False)
+    monkeypatch.setattr("controller.profiles.evaluate_day_darkness", lambda *_a, **_kw: False)
 
     light.power_off()
     time.sleep(1)
@@ -257,9 +257,9 @@ def test_party_mode_color_reaches_lamp(monkeypatch, light):
     State is written directly (simulating what nanoleaf-cli party would do)
     then main() is called.  Lamp must end up at PARTY_PROFILE HSB values.
     """
-    import state as state_mod
+    import controller.state as state_mod
     import sunrise_sunset_controller as ctrl
-    from config import PARTY_PROFILE
+    from controller.config import PARTY_PROFILE
 
     weather = _make_weather(sunrise_hour=5, sunset_hour=20)
     monkeypatch.setattr(ctrl, "get_weather", lambda *_a, **_kw: weather)
@@ -315,7 +315,7 @@ def test_backoff_skips_lamp_but_updates_state(monkeypatch):
     Note: 192.0.2.1 is TEST-NET (RFC 5737) — guaranteed unreachable, no route.
     The connection attempt will time out after ~3 s (nanoleafLight connect timeout).
     """
-    import state as state_mod
+    import controller.state as state_mod
     import sunrise_sunset_controller as ctrl
 
     weather = _make_weather(sunrise_hour=5, sunset_hour=20)

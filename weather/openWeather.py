@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 import requests
 from dotenv import load_dotenv
 
-from noaa_solar import get_sun_elevation as _noaa_elevation
+from weather.noaa_solar import get_sun_elevation as _noaa_elevation
 
 
 # Condition codes that indicate reduced outdoor light
