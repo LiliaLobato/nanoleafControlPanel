@@ -137,32 +137,85 @@ def test_fade(light):
 # ---------------------------------------------------------------------------
 
 
-def test_color_while_off_prestaging(light):
-    """Verify that Nanoleaf retains colour state set while powered off.
+def test_set_hsb_while_off_side_effect(light):
+    """Document hardware behavior: bare set_hsb() while off turns the lamp on.
 
-    This is the key assumption behind the controller's continuous pre-staging
-    strategy. If this fails, the manual-on flow needs to be redesigned.
+    The Nanoleaf API does not distinguish between "set colour" and "set colour
+    and power on" — any /state PUT without an explicit 'on' field causes the
+    device to power on. This test pins that behavior so we know when it changes.
+
+    The controller works around this by always including 'on: false' in the
+    batched PUT when pre-staging (see apply_profile in profiles.py).
     """
     light.power_off()
     time.sleep(1)
 
-    # Send colour while lamp is OFF
-    light.set_hsb(30, 50, 60)
+    light.set_hsb(30, 50, 60)   # no on= argument — raw API behavior
     time.sleep(0.5)
 
-    # Power on — lamp should light at (30, 50, 60) without any further call
+    state = light.get_full_state()
+    print(f"State after bare set_hsb() while off: {state}")
+
+    assert state["on"] is True, (
+        f"Expected lamp to be ON (hardware side-effect of bare set_hsb()), "
+        f"got on={state['on']} — hardware behavior may have changed"
+    )
+
+
+def test_color_while_off_prestaging(light):
+    """Verify pre-staging with on=False: colour set while off, lamp stays off,
+    correct colour on next power-on.
+
+    This is the behaviour the controller relies on. set_hsb(on=False) includes
+    'on: false' in the batched PUT, preventing the side-effect power-on
+    documented in test_set_hsb_while_off_side_effect.
+
+    Three things must hold:
+      1. set_hsb(on=False) while off does NOT turn the lamp on.
+      2. The colour is retained on the device while the lamp is off.
+      3. A subsequent power_on() lights the lamp at those values.
+    """
+    light.power_off()
+    time.sleep(1)
+
+    # Pre-stage colour with explicit on=False — this is what the controller sends
+    light.set_hsb(30, 50, 60, on=False)
+    time.sleep(0.5)
+
+    # 1 + 2: lamp stays off AND colour is already stored on the device
+    state_while_off = light.get_full_state()
+    print(f"State after set_hsb(on=False) while off: {state_while_off}")
+
+    assert state_while_off["on"] is False, (
+        f"Pre-staging FAILED: set_hsb(on=False) still turned the lamp ON. "
+        f"Got: {state_while_off}"
+    )
+    assert abs(state_while_off["hue"] - 30) <= 5, (
+        f"Pre-staged hue wrong: expected ~30, got {state_while_off['hue']}"
+    )
+    assert abs(state_while_off["sat"] - 50) <= 5, (
+        f"Pre-staged sat wrong: expected ~50, got {state_while_off['sat']}"
+    )
+    assert abs(state_while_off["brightness"] - 60) <= 5, (
+        f"Pre-staged brightness wrong: expected ~60, got {state_while_off['brightness']}"
+    )
+
+    # 3: manual power-on lights at the pre-staged colour without any further colour call
     light.power_on()
     time.sleep(1)
 
-    state = light.get_full_state()
-    print(f"State after power-on from pre-staged colour: {state}")
+    state_after_on = light.get_full_state()
+    print(f"State after power-on from pre-staged colour: {state_after_on}")
 
-    assert abs(state["hue"] - 30) <= 5, (
-        f"Pre-staging FAILED: expected hue ~30, got {state['hue']}. "
-        "The controller's pre-staging assumption is invalid — redesign the manual-on flow."
+    assert abs(state_after_on["hue"] - 30) <= 5, (
+        f"Wrong hue after power-on: expected ~30, got {state_after_on['hue']}"
     )
-    assert abs(state["sat"] - 50) <= 5, f"Pre-staging FAILED: expected sat ~50, got {state['sat']}"
-    assert abs(state["brightness"] - 60) <= 5, f"Pre-staging FAILED: expected brightness ~60, got {state['brightness']}"
+    assert abs(state_after_on["sat"] - 50) <= 5, (
+        f"Wrong sat after power-on: expected ~50, got {state_after_on['sat']}"
+    )
+    assert abs(state_after_on["brightness"] - 60) <= 5, (
+        f"Wrong brightness after power-on: expected ~60, got {state_after_on['brightness']}"
+    )
 
 
 # ---------------------------------------------------------------------------
