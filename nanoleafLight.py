@@ -165,13 +165,21 @@ class nanoleafLight:
     # Batched colour setters
     # ------------------------------------------------------------------
 
-    def set_hsb(self, hue: int, saturation: int, brightness: int, duration: int = 0) -> bool:
+    def set_hsb(
+        self,
+        hue: int,
+        saturation: int,
+        brightness: int,
+        duration: int = 0,
+        on: bool | None = None,
+    ) -> bool:
         """Set hue, saturation, and brightness in a single batched PUT /state call.
 
         :param hue: 0–360
         :param saturation: 0–100
         :param brightness: 0–100
         :param duration: transition duration in tenths of a second (0 = instant)
+        :param on: if provided, include power state in the same call (True=on, False=off)
         :returns: True if successful, otherwise False
         """
         if not 0 <= hue <= 360:
@@ -185,18 +193,27 @@ class nanoleafLight:
             "sat": {"value": saturation},
             "brightness": {"value": brightness, "duration": duration},
         }
+        if on is not None:
+            data["on"] = {"value": on}
         try:
             self._request("PUT", "/state", data=json.dumps(data))
             return True
         except NanoleafError:
             return False
 
-    def set_color_temp_and_brightness(self, ct: int, brightness: int, duration: int = 0) -> bool:
+    def set_color_temp_and_brightness(
+        self,
+        ct: int,
+        brightness: int,
+        duration: int = 0,
+        on: bool | None = None,
+    ) -> bool:
         """Set colour temperature and brightness in a single batched PUT /state call.
 
         :param ct: colour temperature in Kelvin (1200–6500)
         :param brightness: 0–100
         :param duration: transition duration in tenths of a second (0 = instant)
+        :param on: if provided, include power state in the same call (True=on, False=off)
         :returns: True if successful, otherwise False
         """
         if not 1200 <= ct <= 6500:
@@ -207,6 +224,8 @@ class nanoleafLight:
             "ct": {"value": ct},
             "brightness": {"value": brightness, "duration": duration},
         }
+        if on is not None:
+            data["on"] = {"value": on}
         try:
             self._request("PUT", "/state", data=json.dumps(data))
             return True

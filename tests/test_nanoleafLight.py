@@ -142,6 +142,29 @@ class TestSetHsb:
         with pytest.raises(ValueError):
             light.set_hsb(hue, sat, brightness)
 
+    def test_on_false_included_in_body(self, light):
+        """on=False batches power-off with color so pre-staging never turns the lamp on."""
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            light.set_hsb(30, 50, 60, on=False)
+        _, kwargs = mock_req.call_args
+        body = json.loads(kwargs["data"])
+        assert body["on"] == {"value": False}, f"Expected on=False in body, got {body}"
+
+    def test_on_true_included_in_body(self, light):
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            light.set_hsb(30, 50, 60, on=True)
+        _, kwargs = mock_req.call_args
+        body = json.loads(kwargs["data"])
+        assert body["on"] == {"value": True}, f"Expected on=True in body, got {body}"
+
+    def test_on_none_omitted_from_body(self, light):
+        """Default (on=None) must not include 'on' key — no unintended power changes."""
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            light.set_hsb(30, 50, 60)
+        _, kwargs = mock_req.call_args
+        body = json.loads(kwargs["data"])
+        assert "on" not in body, f"'on' should be absent when not specified, got {body}"
+
 
 # ---------------------------------------------------------------------------
 # set_color_temp_and_brightness — batched PUT /state
@@ -171,6 +194,21 @@ class TestSetColorTempAndBrightness:
     def test_raises_on_out_of_range(self, light, ct, brightness):
         with pytest.raises(ValueError):
             light.set_color_temp_and_brightness(ct, brightness)
+
+    def test_on_false_included_in_body(self, light):
+        """on=False batches power-off with color so pre-staging never turns the lamp on."""
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            light.set_color_temp_and_brightness(6000, 100, on=False)
+        _, kwargs = mock_req.call_args
+        body = json.loads(kwargs["data"])
+        assert body["on"] == {"value": False}, f"Expected on=False in body, got {body}"
+
+    def test_on_none_omitted_from_body(self, light):
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            light.set_color_temp_and_brightness(6000, 100)
+        _, kwargs = mock_req.call_args
+        body = json.loads(kwargs["data"])
+        assert "on" not in body, f"'on' should be absent when not specified, got {body}"
 
 
 # ---------------------------------------------------------------------------

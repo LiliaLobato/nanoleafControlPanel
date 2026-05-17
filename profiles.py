@@ -160,30 +160,29 @@ def apply_profile(
     should_be_on: bool,
     light_state: dict,
 ) -> bool:
-    """Send effective_color to the lamp and adjust power as needed.
+    """Send effective_color and power state to the lamp in a single batched call.
 
-    Always pre-stages the color (even when the lamp is off) so the next
-    manual-on immediately reflects the correct color.
+    Including 'on' in the color payload prevents the Nanoleaf API from silently
+    powering on the lamp as a side effect of a color-while-off pre-staging call.
 
-    Returns True on success, False if any API call failed.
+    Returns True on success, False if the API call failed.
     """
-    if effective_color.mode == "ct":
-        ok = light.set_color_temp_and_brightness(
-            effective_color.color_temp, effective_color.brightness
-        )
-    else:
-        ok = light.set_hsb(
-            effective_color.hue, effective_color.saturation, effective_color.brightness
-        )
-    if not ok:
-        return False
-
     currently_on = light_state.get("on", False)
-    if should_be_on and not currently_on:
-        return light.power_on()
-    if not should_be_on and currently_on:
-        return light.power_off()
-    return True
+
+    if not should_be_on:
+        on_value: bool | None = False      # keep/set off; blocks side-effect power-on
+    elif should_be_on and not currently_on:
+        on_value = True                    # turn on with the color in one call
+    else:
+        on_value = None                    # already on and staying on — omit field
+
+    if effective_color.mode == "ct":
+        return light.set_color_temp_and_brightness(
+            effective_color.color_temp, effective_color.brightness, on=on_value
+        )
+    return light.set_hsb(
+        effective_color.hue, effective_color.saturation, effective_color.brightness, on=on_value
+    )
 
 
 def calculate_effective_color_profile(
