@@ -224,12 +224,15 @@ def save_config(data: dict) -> None:
 
     Creates the config directory if it doesn't exist.
     The caller is responsible for reading, merging, and validating before calling.
+    Clears the mtime cache so the very next load_config() / load_profiles() call
+    reads the file fresh instead of returning the now-stale cached data.
     """
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_PATH.parent / (CONFIG_PATH.name + ".tmp")
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, CONFIG_PATH)
+    _config_cache.clear()
 
 
 def load_profiles() -> dict[str, LightProfile]:
