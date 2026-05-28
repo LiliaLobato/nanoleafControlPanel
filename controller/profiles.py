@@ -12,14 +12,8 @@ from typing import Any, Optional, Union
 from controller.config import (
     Config,
     LightProfile,
-    SUNRISE_START_PROFILE,
-    SUNRISE_END_PROFILE,
-    MORNING_PROFILE,
-    DAYTIME_ON_PROFILE,
-    NIGHT_PROFILE,
-    LATE_NIGHT_PROFILE,
-    PARTY_PROFILE,
     OFF_PROFILE,
+    load_profiles,
 )
 from controller.dateTime import combine, parse_iso
 from nanoleaf.interpolation import interpolate_profiles
@@ -59,12 +53,13 @@ def _morning_ramp_profile(
     elapsed_secs = (now - ramp_start).total_seconds()
     t = max(0.0, min(1.0, elapsed_secs / total_secs)) if total_secs > 0 else 1.0
 
+    profiles = load_profiles()
     stage_1_end = 0.8
     if t <= stage_1_end:
         t1 = t / stage_1_end
-        return interpolate_profiles(SUNRISE_START_PROFILE, SUNRISE_END_PROFILE, t1)
+        return interpolate_profiles(profiles["SUNRISE_START"], profiles["SUNRISE_END"], t1)
     t2 = (t - stage_1_end) / (1.0 - stage_1_end)
-    return interpolate_profiles(SUNRISE_END_PROFILE, MORNING_PROFILE, t2)
+    return interpolate_profiles(profiles["SUNRISE_END"], profiles["MORNING"], t2)
 
 
 # ---------------------------------------------------------------------------
@@ -88,13 +83,15 @@ def calculate_target_profile(
     if phase == "morning_ramp":
         return _morning_ramp_profile(now, weather, config)
 
+    profiles = load_profiles()
+
     if phase == "day":
         if evaluate_day_darkness(weather, state, now, config):
-            return DAYTIME_ON_PROFILE
+            return profiles["DAYTIME_ON"]
         return None
 
     if phase == "evening_ramp":
-        return DAYTIME_ON_PROFILE
+        return profiles["DAYTIME_ON"]
 
     if phase == "night_ramp":
         t = _phase_t(
@@ -102,7 +99,7 @@ def calculate_target_profile(
             combine(now, config.force_evening_time),
             combine(now, config.night_full_time),
         )
-        return interpolate_profiles(DAYTIME_ON_PROFILE, NIGHT_PROFILE, t)
+        return interpolate_profiles(profiles["DAYTIME_ON"], profiles["NIGHT"], t)
 
     if phase == "hard_cutoff_ramp":
         t = _phase_t(
@@ -110,7 +107,7 @@ def calculate_target_profile(
             combine(now, config.night_full_time),
             combine(now, config.hard_cutoff_time),
         )
-        return interpolate_profiles(NIGHT_PROFILE, OFF_PROFILE, t)
+        return interpolate_profiles(profiles["NIGHT"], OFF_PROFILE, t)
 
     if phase == "off":
         return None
@@ -124,7 +121,7 @@ def calculate_target_profile(
             parse_iso(started_at),
             parse_iso(until),
         )
-        return interpolate_profiles(LATE_NIGHT_PROFILE, OFF_PROFILE, t)
+        return interpolate_profiles(profiles["LATE_NIGHT"], OFF_PROFILE, t)
 
     if phase == "party_mode":
         pm = state.get("party_mode", {})
@@ -134,12 +131,13 @@ def calculate_target_profile(
             logger.warning("calculate_target_profile: party fade_minutes is negative (%d) — treating as 0", fade_minutes)
             fade_minutes = 0
         pd = pm.get("profile", {})
+        default_party = profiles["PARTY"]
         party = LightProfile(
-            mode=pd.get("mode", PARTY_PROFILE.mode),
-            hue=pd.get("hue", PARTY_PROFILE.hue),
-            saturation=pd.get("saturation", PARTY_PROFILE.saturation),
-            brightness=pd.get("brightness", PARTY_PROFILE.brightness),
-            color_temp=pd.get("color_temp", PARTY_PROFILE.color_temp),
+            mode=pd.get("mode", default_party.mode),
+            hue=pd.get("hue", default_party.hue),
+            saturation=pd.get("saturation", default_party.saturation),
+            brightness=pd.get("brightness", default_party.brightness),
+            color_temp=pd.get("color_temp", default_party.color_temp),
         )
         if fade_minutes > 0:
             fade_start = ends_at - timedelta(minutes=fade_minutes)
@@ -199,6 +197,7 @@ def calculate_effective_color_profile(
     """
     if target is not None:
         return target
+    profiles = load_profiles()
     if phase == "day":
-        return DAYTIME_ON_PROFILE
-    return NIGHT_PROFILE
+        return profiles["DAYTIME_ON"]
+    return profiles["NIGHT"]

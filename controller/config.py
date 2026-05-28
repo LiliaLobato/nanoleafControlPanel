@@ -6,6 +6,7 @@ built-in profile constants, and the two-layer config loader.
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field, fields
 from datetime import time
 from pathlib import Path
@@ -132,6 +133,18 @@ PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=100)
 # Off target (brightness=0 signals power-off intent to interpolate_profiles)
 OFF_PROFILE = LightProfile(mode="hsb", brightness=0)
 
+# Canonical name → default constant mapping used by load_profiles() and the CLI.
+PROFILE_DEFAULTS: dict[str, LightProfile] = {
+    "SUNRISE_START": SUNRISE_START_PROFILE,
+    "SUNRISE_END":   SUNRISE_END_PROFILE,
+    "MORNING":       MORNING_PROFILE,
+    "DAYTIME_ON":    DAYTIME_ON_PROFILE,
+    "NIGHT":         NIGHT_PROFILE,
+    "LATE_NIGHT":    LATE_NIGHT_PROFILE,
+    "PARTY":         PARTY_PROFILE,
+    "OFF":           OFF_PROFILE,
+}
+
 
 # ---------------------------------------------------------------------------
 # Config loader
@@ -204,3 +217,50 @@ def load_config() -> Config:
         )
 
     return config
+
+
+def save_config(data: dict) -> None:
+    """Atomically write data to CONFIG_PATH via temp file + os.replace().
+
+    Creates the config directory if it doesn't exist.
+    The caller is responsible for reading, merging, and validating before calling.
+    """
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_PATH.parent / (CONFIG_PATH.name + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, CONFIG_PATH)
+
+
+def load_profiles() -> dict[str, LightProfile]:
+    """Return effective profiles: default constants merged with config.json overrides.
+
+    Uses the same mtime-cached config.json read as load_config() — one file
+    stat per call, re-reads only when config.json changes.
+    Profiles absent from config.json return their default constant unchanged.
+    Invalid stored values fall back to the default constant.
+    """
+    overrides = read_json_cached(CONFIG_PATH, _config_cache, logger)
+    profile_overrides = overrides.get("profiles", {})
+    if not profile_overrides:
+        return dict(PROFILE_DEFAULTS)
+
+    result: dict[str, LightProfile] = {}
+    for name, default in PROFILE_DEFAULTS.items():
+        stored = profile_overrides.get(name)
+        if not stored:
+            result[name] = default
+            continue
+        merged = {
+            "mode":       stored.get("mode",       default.mode),
+            "hue":        stored.get("hue",        default.hue),
+            "saturation": stored.get("saturation", default.saturation),
+            "brightness": stored.get("brightness", default.brightness),
+            "color_temp": stored.get("color_temp", default.color_temp),
+        }
+        try:
+            result[name] = LightProfile(**merged)
+        except (TypeError, ValueError) as exc:
+            logger.warning("load_profiles: invalid override for %r (%s) — using default", name, exc)
+            result[name] = default
+    return result
