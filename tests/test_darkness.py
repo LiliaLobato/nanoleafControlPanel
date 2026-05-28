@@ -16,32 +16,36 @@ PRE_DAWN_UTC = datetime(2025, 3, 20, 13, 30, 0, tzinfo=timezone.utc)     # ~-8 d
 class TestIsDarkOutside:
     """Truth table: (sun position) x (weather conditions) -> dark or not."""
 
-    @pytest.mark.parametrize("description, fixture_name, at", [
+    @pytest.mark.parametrize("description, fixture_name, at, cloud_override", [
         (
             "high sun + clear sky (summer noon, ~62 deg, 5% clouds)",
             "clear.json",
             SUMMER_NOON_UTC,
+            None,
         ),
         (
             "high sun + overcast (summer noon, ~62 deg, well above 20 deg threshold)",
             "overcast.json",
             SUMMER_NOON_UTC,
+            None,
         ),
         (
             "low sun + clear sky (winter noon, ~19 deg, clear non-adverse)",
             "clear.json",
             WINTER_NOON_UTC,
+            None,
         ),
         (
             "low sun + adverse but low clouds (winter noon, rain at 50% clouds, below 75% threshold)",
             "rain.json",
             WINTER_NOON_UTC,
+            50,  # override fixture clouds to 50% — below dark_cloud_threshold of 75%
         ),
     ])
-    def test_not_dark_scenarios(self, description, fixture_name, at):
-        if fixture_name == "rain.json" and "50%" in description:
+    def test_not_dark_scenarios(self, description, fixture_name, at, cloud_override):
+        if cloud_override is not None:
             data = _load_fixture(fixture_name)
-            data["clouds"]["all"] = 50
+            data["clouds"]["all"] = cloud_override
             w = OpenWeatherLight.from_cache(data, LAT, LON)
         else:
             w = _make_instance(fixture_name)

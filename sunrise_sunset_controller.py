@@ -19,18 +19,18 @@ import filelock
 from dotenv import load_dotenv
 
 from nanoleaf.color_helper import describe_color
-from controller.config import Config, load_config
-from controller.dateTime import combine
+from controller.config import load_config
+from controller.dateTime import parse_iso
 from controller.log_setup import setup_logging
-from nanoleaf.nanoleafLight import nanoleafLight, NanoleafConnectionError
-from weather.openWeather import OpenWeatherLight
+from controller.phase import calculate_phase
+from nanoleaf.nanoleafLight import NanoleafLight, NanoleafConnectionError
 from controller.profiles import (
     apply_profile,
     calculate_effective_color_profile,
     calculate_target_profile,
 )
 from controller.state import (
-    acquire_run_lock,
+    get_run_lock,
     apply_dnd_flag,
     clear_dnd_if_expired,
     detect_manual_override,
@@ -43,109 +43,28 @@ from controller.state import (
 )
 from weather.weather_cache import get_weather
 
-load_dotenv()
-
-LOCAL_TZ = ZoneInfo(os.getenv("TIMEZONE", "America/Los_Angeles"))
-
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Phase calculation
-# ---------------------------------------------------------------------------
-
-def calculate_phase(
-    now: datetime,
-    weather: Optional[OpenWeatherLight],
-    config: Config,
-    state: dict,
-) -> str:
-    """Return the current controller phase name.
-
-    Priority (first match wins):
-    1. morning_ramp  — non-negotiable sunrise simulator
-    2. party_mode    — active and not yet expired
-    3. Standard timeline: pre_morning, day, evening_ramp, night_ramp,
-       hard_cutoff_ramp, off
-    4. late_night_override — post hard_cutoff with active manual override
-
-    Phase boundaries:
-        pre_morning      → before morning_ramp_start
-        morning_ramp     → [morning_ramp_start, full_morning_time)
-        day              → [full_morning_time, adjusted_sunset)
-        evening_ramp     → [adjusted_sunset, force_evening_time)   DAYTIME_ON held
-        night_ramp       → [force_evening_time, night_full_time)   DAYTIME_ON→NIGHT
-        hard_cutoff_ramp → [night_full_time, hard_cutoff_time)     NIGHT→OFF
-        off / late_night_override → [hard_cutoff_time, ...)
-    """
-    if weather:
-        sunrise_dt = weather.get_sunrise_dt(tz=now.tzinfo)
-        morning_ramp_start = min(
-            sunrise_dt,
-            combine(now, config.morning_latest_start),
-        )
-        adjusted_sunset = weather.get_adjusted_sunset(
-            config.cloud_threshold,
-            config.adverse_offset_min,
-            config.adverse_offset_max,
-            tz=now.tzinfo,
-        )
-    else:
-        morning_ramp_start = combine(now, config.morning_latest_start)
-        adjusted_sunset = combine(now, config.force_evening_time)
-
-    full_morning_dt  = combine(now, config.full_morning_time)
-    force_evening_dt = combine(now, config.force_evening_time)
-    night_full_dt    = combine(now, config.night_full_time)
-    hard_cutoff_dt   = combine(now, config.hard_cutoff_time)
-
-    # 1. Morning ramp
-    if morning_ramp_start <= now < full_morning_dt:
-        return "morning_ramp"
-
-    # 2. Party mode
-    pm = state.get("party_mode", {})
-    if pm.get("active") and pm.get("ends_at"):
-        ends_at = datetime.fromisoformat(pm["ends_at"])
-        if now < ends_at:
-            return "party_mode"
-
-    # 3. Standard timeline
-    if now < morning_ramp_start:
-        return "pre_morning"
-    if now < adjusted_sunset:
-        return "day"
-    if now < force_evening_dt:
-        return "evening_ramp"
-    if now < night_full_dt:
-        return "night_ramp"
-    if now < hard_cutoff_dt:
-        return "hard_cutoff_ramp"
-
-    # 4. Post hard-cutoff — check for active late-night override
-    late_night = state.get("late_night_override")
-    if late_night and late_night.get("until"):
-        if datetime.fromisoformat(late_night["until"]) > now:
-            return "late_night_override"
-
-    return "off"
 
 
 # ---------------------------------------------------------------------------
 # Cron orchestration
 # ---------------------------------------------------------------------------
 
-def _run(now: Optional[datetime] = None) -> None:
+def run(now: Optional[datetime] = None) -> None:
     """Execute one cron tick of the controller."""
     t0 = _time.monotonic()
+
+    # Resolve `now` first so the timestamp reflects actual run start, not post-setup time.
+    # LOCAL_TZ is read here (not at module level) so TIMEZONE env var changes take effect
+    # between cron ticks and in tests that set the env var after import.
+    local_tz = ZoneInfo(os.getenv("TIMEZONE", "America/Los_Angeles"))
+    if now is None:
+        now = datetime.now(tz=local_tz)
 
     config = load_config()
     setup_logging(config)
 
     state = load_state()
-
-    if now is None:
-        now = datetime.now(tz=LOCAL_TZ)
 
     logger.debug("─── Run start — %s ───", now.strftime("%H:%M:%S"))
 
@@ -155,12 +74,15 @@ def _run(now: Optional[datetime] = None) -> None:
         cache = state.get("weather_cache") or {}
         fetched_at = cache.get("fetched_at")
         if fetched_at:
-            age_min = (now - datetime.fromisoformat(fetched_at)).total_seconds() / 60
-            logger.debug("Weather: cached %.0f min ago", age_min)
+            try:
+                age_min = (now - parse_iso(fetched_at)).total_seconds() / 60
+                logger.debug("Weather: cached %.0f min ago", age_min)
+            except (ValueError, TypeError) as exc:
+                logger.debug("Weather: could not parse cached fetched_at (%s)", exc)
         try:
             logger.debug("Sun elevation: %.1f°", weather.get_sun_elevation(at=now))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Sun elevation unavailable: %s", exc)
     else:
         logger.debug("Weather: unavailable — running without weather data")
 
@@ -201,10 +123,16 @@ def _run(now: Optional[datetime] = None) -> None:
         return
 
     # --- Lamp contact ----------------------------------------------------
-    light = nanoleafLight(
+    ip    = os.getenv("NANOLEAF_IP_ADDRESS", "")
+    token = os.getenv("NANOLEAF_AUTH_TOKEN", "")
+    if not ip:
+        logger.warning("NANOLEAF_IP_ADDRESS is not set — lamp contact will fail")
+    if not token:
+        logger.warning("NANOLEAF_AUTH_TOKEN is not set — lamp contact will fail")
+    light = NanoleafLight(
         os.getenv("NANOLEAF_NAME", "Nanoleaf"),
-        os.getenv("NANOLEAF_IP_ADDRESS", ""),
-        os.getenv("NANOLEAF_AUTH_TOKEN", ""),
+        ip,
+        token,
     )
     light_state = light.get_full_state()
     if not light_state:
@@ -272,7 +200,7 @@ def _run(now: Optional[datetime] = None) -> None:
     )
 
     try:
-        ok = apply_profile(light, target_profile, effective_color, should_be_on, light_state)
+        ok = apply_profile(light, effective_color, should_be_on, light_state)
     except Exception as exc:
         handle_lamp_failure(state, now, config, exc)
         save_state(state)
@@ -313,18 +241,20 @@ def _run(now: Optional[datetime] = None) -> None:
     logger.debug("─── Run complete (%.2fs) ───", _time.monotonic() - t0)
 
 
+# Backwards-compatible alias — tests may import _run directly.
+_run = run
+
+
 def main(now: Optional[datetime] = None) -> None:
+    load_dotenv()
     try:
-        lock = acquire_run_lock()
+        with get_run_lock():
+            try:
+                run(now)
+            except Exception:
+                logger.exception("Unhandled exception in controller — exiting cleanly")
     except filelock.Timeout:
         logger.debug("Another controller instance is running — exiting")
-        return
-
-    with lock:
-        try:
-            _run(now)
-        except Exception:
-            logger.exception("Unhandled exception in controller — exiting cleanly")
 
 
 if __name__ == "__main__":

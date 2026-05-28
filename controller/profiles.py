@@ -7,7 +7,7 @@ including the two-stage morning ramp. apply_profile() lives here too.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from controller.config import (
     Config,
@@ -21,7 +21,7 @@ from controller.config import (
     PARTY_PROFILE,
     OFF_PROFILE,
 )
-from controller.dateTime import combine
+from controller.dateTime import combine, parse_iso
 from nanoleaf.interpolation import interpolate_profiles
 from weather.openWeather import OpenWeatherLight
 from weather.weather_cache import evaluate_day_darkness
@@ -81,8 +81,6 @@ def calculate_target_profile(
     """Return the target light profile for the current phase, or None if power off.
 
     None means the phase wants the light powered off.
-    The oscillation lockout for the day phase is applied in task 11
-    (evaluate_day_darkness); for now darkness is evaluated directly.
     """
     if phase == "pre_morning":
         return None
@@ -118,18 +116,23 @@ def calculate_target_profile(
         return None
 
     if phase == "late_night_override":
-        late_night = state.get("late_night_override", {})
+        late_night = state.get("late_night_override") or {}
+        started_at = late_night.get("started_at", now.isoformat())
+        until = late_night.get("until", now.isoformat())
         t = _phase_t(
             now,
-            datetime.fromisoformat(late_night["started_at"]),
-            datetime.fromisoformat(late_night["until"]),
+            parse_iso(started_at),
+            parse_iso(until),
         )
         return interpolate_profiles(LATE_NIGHT_PROFILE, OFF_PROFILE, t)
 
     if phase == "party_mode":
         pm = state.get("party_mode", {})
-        ends_at = datetime.fromisoformat(pm["ends_at"])
+        ends_at = parse_iso(pm.get("ends_at") or now.isoformat())
         fade_minutes = pm.get("fade_minutes", config.party_default_fade_minutes)
+        if fade_minutes < 0:
+            logger.warning("calculate_target_profile: party fade_minutes is negative (%d) — treating as 0", fade_minutes)
+            fade_minutes = 0
         pd = pm.get("profile", {})
         party = LightProfile(
             mode=pd.get("mode", PARTY_PROFILE.mode),
@@ -155,7 +158,6 @@ def calculate_target_profile(
 
 def apply_profile(
     light: Any,
-    target_profile: Optional[LightProfile],
     effective_color: LightProfile,
     should_be_on: bool,
     light_state: dict,
@@ -170,8 +172,8 @@ def apply_profile(
     currently_on = light_state.get("on", False)
 
     if not should_be_on:
-        on_value: bool | None = False      # keep/set off; blocks side-effect power-on
-    elif should_be_on and not currently_on:
+        on_value: Union[bool, None] = False   # keep/set off; blocks side-effect power-on
+    elif not currently_on:
         on_value = True                    # turn on with the color in one call
     else:
         on_value = None                    # already on and staying on — omit field

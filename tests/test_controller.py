@@ -26,7 +26,9 @@ from controller.profiles import (
     calculate_effective_color_profile,
     calculate_target_profile,
 )
+from controller.dateTime import parse_iso
 from controller.state import (
+    _empty_state,
     apply_dnd_flag,
     clear_dnd_if_expired,
     detect_manual_override,
@@ -35,7 +37,7 @@ from controller.state import (
     is_lamp_in_backoff,
     should_respect_dnd,
 )
-from sunrise_sunset_controller import calculate_phase
+from controller.phase import calculate_phase
 from weather.weather_cache import evaluate_day_darkness
 
 UTC = ZoneInfo("UTC")
@@ -56,28 +58,7 @@ def cfg(**kwargs) -> Config:
     return c
 
 
-def empty_state() -> dict:
-    return {
-        "weather_cache": None,
-        "last_applied": None,
-        "last_daytime_toggle_at": None,
-        "do_not_disturb_until": None,
-        "dnd_scope": None,
-        "late_night_override": None,
-        "party_mode": {"active": False},
-        "lamp_failure_state": {
-            "consecutive_failures": 0,
-            "last_failure_at": None,
-            "last_failure_type": None,
-            "next_retry_at": None,
-        },
-        "weather_failure_state": {
-            "consecutive_failures": 0,
-            "last_failure_at": None,
-            "next_retry_at": None,
-        },
-        "last_error": None,
-    }
+empty_state = _empty_state  # single source of truth in controller.state
 
 
 def weather_mock(sunrise_hour=5, sunrise_min=30, sunset_hour=19, sunset_min=0):
@@ -85,6 +66,7 @@ def weather_mock(sunrise_hour=5, sunrise_min=30, sunset_hour=19, sunset_min=0):
     w = MagicMock()
     w.get_sunrise_dt.return_value = dt(sunrise_hour, sunrise_min)
     w.get_adjusted_sunset.return_value = dt(sunset_hour, sunset_min)
+    w.is_dark_outside.return_value = False  # explicit: bright outside, lamp stays off
     return w
 
 
@@ -253,13 +235,13 @@ class TestDND:
         state = empty_state()
         apply_dnd_flag(state, "morning_ramp", dt(6, 15), DEFAULT_CFG)
         assert state["dnd_scope"] == "morning_ramp", "morning_ramp scope"
-        assert datetime.fromisoformat(state["do_not_disturb_until"]).hour == 7, "clears at 07:00"
+        assert parse_iso(state["do_not_disturb_until"]).hour == 7, "clears at 07:00"
 
         for phase in ["evening_ramp", "night_ramp"]:
             state = empty_state()
             apply_dnd_flag(state, phase, dt(19, 30), DEFAULT_CFG)
             assert state["dnd_scope"] == "overnight", f"{phase} → overnight scope"
-            assert datetime.fromisoformat(state["do_not_disturb_until"]).hour == 7, f"{phase} clears at 07:00 tomorrow"
+            assert parse_iso(state["do_not_disturb_until"]).hour == 7, f"{phase} clears at 07:00 tomorrow"
 
         state = empty_state()
         apply_dnd_flag(state, "day", dt(14, 0), DEFAULT_CFG)
@@ -295,6 +277,52 @@ class TestDND:
 
 
 # ---------------------------------------------------------------------------
+# DND full-cycle integration (manual_off → DND set → next tick respects it)
+# ---------------------------------------------------------------------------
+
+class TestDNDCycle:
+    """Two-tick integration: manual_off sets DND; the following tick keeps the lamp off."""
+
+    def _run_with_state(self, state_in, now_dt, lamp_on=False):
+        from sunrise_sunset_controller import _run
+        saved = {}
+        fake_light = MagicMock()
+        fake_light.get_full_state.return_value = {"on": lamp_on}
+        fake_light.set_hsb.return_value = True
+        fake_light.set_color_temp_and_brightness.return_value = True
+
+        with (
+            patch("sunrise_sunset_controller.load_state", return_value=state_in),
+            patch("sunrise_sunset_controller.save_state", lambda s: saved.update({"state": s})),
+            patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
+            patch("sunrise_sunset_controller.setup_logging"),
+            patch("sunrise_sunset_controller.get_weather", return_value=None),
+            patch("sunrise_sunset_controller.NanoleafLight", return_value=fake_light),
+        ):
+            _run(now_dt)
+
+        return saved.get("state")
+
+    def test_manual_off_sets_dnd_then_next_tick_keeps_lamp_off(self):
+        """Tick 1: user turns lamp off during morning_ramp → DND set.
+        Tick 2: DND still active → lamp stays off despite the active morning_ramp phase.
+        """
+        # Tick 1: controller expected ON, lamp reports OFF → manual_off detected → DND set
+        state_in = {**empty_state(), "last_applied": {"power": True, "phase": "morning_ramp"}}
+        state1 = self._run_with_state(state_in, dt(6, 15), lamp_on=False)
+
+        assert state1["dnd_scope"] == "morning_ramp", "manual_off must set DND scope"
+        assert state1["do_not_disturb_until"] is not None, "DND expiry must be written"
+        assert state1["last_applied"]["power"] is False, "lamp kept off on tick 1"
+
+        # Tick 2: DND still active (full_morning_time is 07:00; now is 06:20) → stays off
+        state2 = self._run_with_state(state1, dt(6, 20), lamp_on=False)
+
+        assert state2["dnd_scope"] == "morning_ramp", "DND must not clear before full_morning_time"
+        assert state2["last_applied"]["power"] is False, "lamp still off while DND active"
+
+
+# ---------------------------------------------------------------------------
 # Oscillation lockout
 # ---------------------------------------------------------------------------
 
@@ -318,7 +346,7 @@ class TestOscillationLockout:
             w = MagicMock()
             w.is_dark_outside.return_value = True
             evaluate_day_darkness(w, state, dt(14, 0), DEFAULT_CFG)
-            w.is_dark_outside.assert_called_once(), f"minutes_ago={minutes_ago}: weather not re-evaluated"
+            assert w.is_dark_outside.call_count == 1, f"minutes_ago={minutes_ago}: weather not re-evaluated"
             w.reset_mock()
 
 
@@ -340,6 +368,9 @@ class TestLateNightOverride:
         p_mid = calculate_target_profile("late_night_override", started + timedelta(minutes=60), None, DEFAULT_CFG, state)
         assert p_mid.brightness < LATE_NIGHT_PROFILE.brightness, "midpoint dimmer than start"
         assert p_mid.brightness > 0,                             "midpoint not yet off"
+
+        p_end = calculate_target_profile("late_night_override", until, None, DEFAULT_CFG, state)
+        assert p_end.brightness == 0, "t=1.0 endpoint must be fully off (brightness=0)"
 
     def test_morning_ramp_overrides_late_night(self):
         state = {**empty_state(), "late_night_override": {"started_at": dt(23, 30).isoformat(), "until": dt(8, 0).isoformat()}}
@@ -368,7 +399,7 @@ class TestLateNightOverride:
             patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
             patch("sunrise_sunset_controller.setup_logging"),
             patch("sunrise_sunset_controller.get_weather", return_value=None),
-            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
+            patch("sunrise_sunset_controller.NanoleafLight", return_value=fake_light),
         ):
             _run(dt(6, 15))
 
@@ -398,7 +429,7 @@ class TestPartyModeOverride:
             patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
             patch("sunrise_sunset_controller.setup_logging"),
             patch("sunrise_sunset_controller.get_weather", return_value=None),
-            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
+            patch("sunrise_sunset_controller.NanoleafLight", return_value=fake_light),
         ):
             _run(now_dt)
 
@@ -454,7 +485,7 @@ class TestLastAppliedSchema:
             patch("sunrise_sunset_controller.load_config", return_value=DEFAULT_CFG),
             patch("sunrise_sunset_controller.setup_logging"),
             patch("sunrise_sunset_controller.get_weather", return_value=None),
-            patch("sunrise_sunset_controller.nanoleafLight", return_value=fake_light),
+            patch("sunrise_sunset_controller.NanoleafLight", return_value=fake_light),
         ):
             _run(dt(14, 0))
 
@@ -471,7 +502,11 @@ class TestWeatherBackoff:
     def test_failure_increments_counter(self):
         from weather.weather_cache import get_weather
         state = empty_state()
-        with patch("weather.weather_cache.OpenWeatherLight", side_effect=Exception("API down")):
+        env = {"OPENWEATHER_LATITUDE": "47.6", "OPENWEATHER_LONGITUDE": "-122.1", "OPENWEATHER_AUTH_TOKEN": "tok"}
+        with (
+            patch("weather.weather_cache.OpenWeatherLight", side_effect=Exception("API down")),
+            patch.dict("os.environ", env),
+        ):
             get_weather(state, dt(10, 0), DEFAULT_CFG)
         f = state["weather_failure_state"]
         assert f["consecutive_failures"] == 1 and f["next_retry_at"] is not None
@@ -493,6 +528,12 @@ class TestWeatherBackoff:
         fresh = empty_state()
         fresh["weather_cache"] = {"fetched_at": dt(10, 0).isoformat(), "raw_data": {}}
         assert should_refresh_weather(fresh, dt(11, 0), DEFAULT_CFG) is False, "fresh cache"
+
+        # stale cache (older than max age), no backoff → refresh
+        stale = empty_state()
+        stale["weather_cache"] = {"fetched_at": dt(10, 0).isoformat(), "raw_data": {}}
+        cfg_short = cfg(weather_cache_max_age_hours=1)
+        assert should_refresh_weather(stale, dt(12, 0), cfg_short) is True, "stale cache triggers refresh"
 
     def test_anchor_time_forces_refresh_even_in_backoff(self):
         """14:00 is a configured anchor — must refresh even when in backoff."""
@@ -526,7 +567,7 @@ class TestLampBackoff:
         f = state["lamp_failure_state"]
         assert f["consecutive_failures"] == 1,            "failure counter incremented"
         assert f["last_failure_type"] == "ConnectionError", "exception type recorded"
-        retry = datetime.fromisoformat(f["next_retry_at"])
+        retry = parse_iso(f["next_retry_at"])
         assert (retry - dt(14, 0)).total_seconds() == 5 * 60, "first failure → 5-min backoff"
 
     def test_handle_lamp_success_resets_state(self):

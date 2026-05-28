@@ -7,7 +7,7 @@ import pytest
 import requests as requests_lib
 
 from nanoleaf.nanoleafLight import (
-    nanoleafLight,
+    NanoleafLight,
     NanoleafAuthError,
     NanoleafConnectionError,
     NanoleafError,
@@ -20,7 +20,7 @@ from nanoleaf.nanoleafLight import (
 
 @pytest.fixture
 def light():
-    return nanoleafLight(name="TestLamp", ip="192.168.1.100", auth_token="test-token")
+    return NanoleafLight(name="TestLamp", ip="192.168.1.100", auth_token="test-token")
 
 
 def _mock_response(status_code: int, body: str = "") -> MagicMock:
@@ -134,7 +134,8 @@ class TestSetHsb:
             assert light.set_hsb(10, 80, 25) is False
 
     @pytest.mark.parametrize("hue,sat,brightness", [
-        (361, 50, 50),   # hue out of range
+        (360, 50, 50),   # hue=360 is outside Nanoleaf API range (0–359)
+        (361, 50, 50),   # hue clearly out of range
         (180, 101, 50),  # sat out of range
         (180, 50, 101),  # brightness out of range
     ])
@@ -232,6 +233,19 @@ class TestSetColor:
         assert sent["hue"]["value"] == expected_hue
         assert sent["sat"]["value"] == expected_sat
         assert sent["brightness"]["value"] == expected_val
+
+    def test_on_false_included_in_body(self, light):
+        """on=False must appear in the PUT body so pre-staging does not turn the lamp on."""
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            light.set_color((255, 0, 0), on=False)
+        _, kwargs = mock_req.call_args
+        assert json.loads(kwargs["data"])["on"] == {"value": False}
+
+    def test_on_true_included_in_body(self, light):
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            light.set_color((255, 0, 0), on=True)
+        _, kwargs = mock_req.call_args
+        assert json.loads(kwargs["data"])["on"] == {"value": True}
 
     def test_returns_false_on_failure(self, light):
         with patch("requests.request", side_effect=requests_lib.exceptions.ConnectionError()):

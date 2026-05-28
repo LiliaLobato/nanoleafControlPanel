@@ -6,6 +6,7 @@ job never needs a log redirect. Verbose mode switches the root level to DEBUG.
 """
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -24,18 +25,30 @@ def setup_logging(config: Config) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     root = logging.getLogger()
+
+    # Always update the level so toggling verbose in config.json takes effect
+    # without requiring a process restart.
+    root.setLevel(logging.DEBUG if config.verbose else logging.INFO)
+
     if any(isinstance(h, RotatingFileHandler) for h in root.handlers):
-        return  # already configured
+        return  # handlers already attached — level was updated above
+
+    fmt = logging.Formatter(
+        "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     handler = RotatingFileHandler(
         LOG_PATH,
         maxBytes=5 * 1024 * 1024,
         backupCount=5,
     )
-    handler.setFormatter(logging.Formatter(
-        "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    ))
+    handler.setFormatter(fmt)
+
+    # Mirror WARNING+ to stderr so disk/permission failures are never silently lost.
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setLevel(logging.WARNING)
+    stderr_handler.setFormatter(fmt)
 
     root.addHandler(handler)
-    root.setLevel(logging.DEBUG if config.verbose else logging.INFO)
+    root.addHandler(stderr_handler)

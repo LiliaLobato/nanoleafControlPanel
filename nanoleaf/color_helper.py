@@ -23,7 +23,7 @@ _HUE_DEFAULTS = [
     (246, 280, "purple"),
     (281, 320, "magenta"),
     (321, 345, "pink"),
-    (346, 360, "red"),
+    (346, 360, "red"),  # red wraps: 346-360 mirrors 0-10 on the colour wheel
 ]
 
 _SAT_DEFAULTS = [
@@ -56,12 +56,13 @@ _overrides_cache: dict = {}
 
 
 def _load_overrides() -> dict:
-    """Return color/saturation/brightness name overrides from config.json, mtime-cached."""
+    """Return color/saturation/brightness/ct name overrides from config.json, mtime-cached."""
     data = read_json_cached(CONFIG_PATH, _overrides_cache, logger)
     return {
         "color_names":      data.get("color_names", {}),
         "saturation_names": data.get("saturation_names", {}),
         "brightness_names": data.get("brightness_names", {}),
+        "ct_names":         data.get("ct_names", {}),
     }
 
 
@@ -80,13 +81,19 @@ def _lookup(value: int, defaults: list, overrides: dict) -> str:
     for range_str, name in overrides.items():
         try:
             lo, hi = (int(x) for x in range_str.split("-"))
+            if lo > hi:
+                logger.warning(
+                    "color_helper: range key %r is reversed (lo=%d > hi=%d) — write it as %r",
+                    range_str, lo, hi, f"{hi}-{lo}",
+                )
+                continue
             if lo <= value <= hi:
                 candidates.append((hi - lo, name))
         except (ValueError, AttributeError):
-            logger.warning("color_helper: invalid range key %r — skipping", range_str)
+            logger.warning("color_helper: invalid range key %r — expected 'lo-hi' integer format", range_str)
 
     if not candidates:
-        return ""
+        return "unknown"
     candidates.sort(key=lambda x: x[0])
     return candidates[0][1]
 
@@ -109,7 +116,7 @@ def describe_color(profile: LightProfile) -> str:
     )
 
     if profile.mode == "ct":
-        ct_name = _lookup(profile.color_temp, _CT_DEFAULTS, {})
+        ct_name = _lookup(profile.color_temp, _CT_DEFAULTS, overrides.get("ct_names", {}))
         return f"{ct_name}, {brightness_desc} brightness"
 
     hue_name = _lookup(

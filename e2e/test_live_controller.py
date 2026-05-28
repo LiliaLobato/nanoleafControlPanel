@@ -77,8 +77,8 @@ def _now_at(hour: int, minute: int = 0) -> datetime:
 @pytest.fixture(scope="module")
 def light():
     """Real nanoleafLight instance, verified reachable before any test runs."""
-    from nanoleaf.nanoleafLight import nanoleafLight
-    lamp = nanoleafLight(
+    from nanoleaf.nanoleafLight import NanoleafLight
+    lamp = NanoleafLight(
         name=os.environ["NANOLEAF_NAME"],
         ip=os.environ["NANOLEAF_IP_ADDRESS"],
         auth_token=os.environ["NANOLEAF_AUTH_TOKEN"],
@@ -304,6 +304,7 @@ def test_party_mode_color_reaches_lamp(monkeypatch, light):
 # 5. Backoff: lamp unreachable — skips API, writes state
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_backoff_skips_lamp_but_updates_state(monkeypatch):
     """Controller with unreachable lamp fails gracefully and enters backoff.
 
@@ -324,7 +325,7 @@ def test_backoff_skips_lamp_but_updates_state(monkeypatch):
 
     now = _now_at(10, 0)  # day phase — deterministic, weather-independent
 
-    # Run 1: unreachable → should log warning and set backoff, not crash
+    # Run 1: unreachable → should log warning and set backoff, not crash  (~3 s)
     ctrl.main(now=now)
 
     saved = state_mod.load_state()
@@ -337,7 +338,7 @@ def test_backoff_skips_lamp_but_updates_state(monkeypatch):
         "Expected next_retry_at to be set after first failure"
 
     # Run 2: inside backoff window → controller must exit before lamp contact,
-    # so consecutive_failures must not increment again
+    # so consecutive_failures must not increment again  (instant — no TCP attempt)
     ctrl.main(now=now)
 
     saved2 = state_mod.load_state()

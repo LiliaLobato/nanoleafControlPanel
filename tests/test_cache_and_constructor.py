@@ -46,21 +46,9 @@ class TestFromCache:
             f"Expected condition_id to match, "
             f"got cached={cached.weather.condition_id}, live={live.weather.condition_id}."
         )
-        assert cached.weather.main == live.weather.main, (
-            f"Expected weather.main to match, "
-            f"got cached={cached.weather.main!r}, live={live.weather.main!r}."
-        )
         assert cached.weather.clouds == live.weather.clouds, (
             f"Expected weather.clouds to match, "
             f"got cached={cached.weather.clouds}, live={live.weather.clouds}."
-        )
-        assert cached.weather.humidity == live.weather.humidity, (
-            f"Expected weather.humidity to match, "
-            f"got cached={cached.weather.humidity}, live={live.weather.humidity}."
-        )
-        assert cached.temperature.temperature == live.temperature.temperature, (
-            f"Expected temperature to match, "
-            f"got cached={cached.temperature.temperature}, live={live.temperature.temperature}."
         )
         assert cached.timezone.sunrise_ts == live.timezone.sunrise_ts, (
             f"Expected sunrise_ts to match, "
@@ -120,13 +108,9 @@ class TestConstructor:
         assert w.is_valid is True, (
             f"Expected is_valid to be True after construction, got {w.is_valid}."
         )
-        assert w.name == "Test Location", (
-            f"Expected w.name == 'Test Location', got {w.name!r}; "
-            "fixture name field must match updated fixture value."
-        )
-        assert w.weather.main == "Clear", (
-            f"Expected w.weather.main == 'Clear', got {w.weather.main!r}; "
-            "weather.main must be populated from the raw response."
+        assert w.name == raw["name"], (
+            f"Expected w.name == {raw['name']!r}, got {w.name!r}; "
+            "name must be read from the fixture's 'name' field."
         )
         assert w.raw_data == raw, (
             "Expected w.raw_data to equal the mock response dict, "

@@ -7,10 +7,9 @@ and darkness evaluation. Designed to be imported without side effects;
 all test/demo code is behind if __name__ == "__main__".
 """
 
-import json
 import os
 from datetime import datetime, timedelta, timezone as dt_timezone
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -33,14 +32,6 @@ _ADVERSE_CODE_RANGES = [
 _ADVERSE_CLOUD_CODES = {803, 804}  # broken clouds, overcast
 
 
-class Temperature:
-    def __init__(self, raw_data: dict):
-        self.temperature = raw_data["main"]["temp"]
-        self.feels_like = raw_data["main"]["feels_like"]
-        self.temp_min = raw_data["main"]["temp_min"]
-        self.temp_max = raw_data["main"]["temp_max"]
-
-
 class Timezone:
     def __init__(self, raw_data: dict):
         self.utc_offset = raw_data["timezone"]
@@ -51,9 +42,6 @@ class Timezone:
 class Weather:
     def __init__(self, raw_data: dict):
         self.condition_id = raw_data["weather"][0]["id"]
-        self.main = raw_data["weather"][0]["main"]
-        self.description = raw_data["weather"][0]["description"]
-        self.humidity = raw_data["main"]["humidity"]
         self.clouds = raw_data["clouds"]["all"]
 
 
@@ -74,35 +62,48 @@ class OpenWeatherLight:
         self.longitude = float(longitude)
         self.auth_token = auth_token
         self.units = units
-        self.url = (
-            f"https://api.openweathermap.org/data/2.5/weather"
-            f"?lat={latitude}&lon={longitude}&units={units}&appid={auth_token}"
-        )
 
         raw_data = self._fetch()
         self._init_from_raw(raw_data)
 
-    def _fetch(self) -> Dict[str, Any]:
+    def _fetch(self) -> dict[str, Any]:
         """Make the live API call and return raw JSON.
+
+        The auth token is kept out of the exception message so it does not
+        appear in log files.
 
         :raises WeatherFetchError: on any network or HTTP failure
         """
+        url = (
+            f"https://api.openweathermap.org/data/2.5/weather"
+            f"?lat={self.latitude}&lon={self.longitude}"
+            f"&units={self.units}&appid={self.auth_token}"
+        )
         try:
-            response = requests.get(self.url, timeout=(3, 5))
+            response = requests.get(url, timeout=(3, 5))
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as exc:
-            raise WeatherFetchError(str(exc)) from exc
+            raise WeatherFetchError(
+                f"Weather API request failed (lat={self.latitude}, lon={self.longitude})"
+            ) from exc
 
-    def _init_from_raw(self, raw_data: Dict[str, Any]) -> None:
-        """Populate all fields from a raw API response dict."""
-        self.raw_data = raw_data
-        self.is_valid = True
-        self.timestamp = raw_data["dt"]
-        self.name = raw_data.get("name", "")
-        self.temperature = Temperature(raw_data)
-        self.timezone = Timezone(raw_data)
-        self.weather = Weather(raw_data)
+    def _init_from_raw(self, raw_data: dict[str, Any]) -> None:
+        """Populate all fields from a raw API response dict.
+
+        :raises WeatherFetchError: if raw_data is missing expected keys
+        """
+        try:
+            self.raw_data = raw_data
+            self.is_valid = True
+            self.timestamp = raw_data["dt"]
+            self.name = raw_data.get("name", "")
+            self.timezone = Timezone(raw_data)
+            self.weather = Weather(raw_data)
+        except KeyError as exc:
+            raise WeatherFetchError(
+                f"Weather data missing expected field: {exc}"
+            ) from exc
 
     @classmethod
     def from_cache(
@@ -116,8 +117,7 @@ class OpenWeatherLight:
         instance.latitude = float(latitude)
         instance.longitude = float(longitude)
         instance.auth_token = ""
-        instance.units = ""
-        instance.url = ""
+        instance.units = "metric"
         instance._init_from_raw(raw_data)
         return instance
 
@@ -157,6 +157,7 @@ class OpenWeatherLight:
 
         Linear interpolation from offset_min (at threshold) to offset_max (at 100%).
         Returns raw sunset if cloud cover < threshold or no adverse conditions.
+        When cloud_threshold >= 100 the full offset_max is applied immediately.
         """
         sunset = self.get_sunset_dt(tz=tz)
         cloud_pct = self.weather.clouds
@@ -164,8 +165,12 @@ class OpenWeatherLight:
         if not self.has_adverse_conditions() or cloud_pct < cloud_threshold:
             return sunset
 
-        # Linear interpolation: threshold% to offset_min, 100% to offset_max
-        t = (cloud_pct - cloud_threshold) / (100 - cloud_threshold)
+        if cloud_threshold >= 100:
+            return sunset - timedelta(minutes=offset_max)
+
+        # Linear interpolation: threshold% → offset_min, 100% → offset_max.
+        # Clamp t to 1.0 in case cloud_pct > 100 (malformed API response).
+        t = min((cloud_pct - cloud_threshold) / (100 - cloud_threshold), 1.0)
         offset_minutes = offset_min + (offset_max - offset_min) * t
         return sunset - timedelta(minutes=offset_minutes)
 
@@ -207,8 +212,7 @@ class OpenWeatherLight:
 # --- Module entry point (demo / manual testing only) ---
 
 if __name__ == "__main__":
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    load_dotenv(os.path.join(script_dir, ".env"))
+    load_dotenv()  # searches upward from CWD, finds project-root .env
 
     LATITUDE = os.getenv("OPENWEATHER_LATITUDE")
     LONGITUDE = os.getenv("OPENWEATHER_LONGITUDE")
@@ -217,7 +221,6 @@ if __name__ == "__main__":
     my_weather = OpenWeatherLight(LATITUDE, LONGITUDE, AUTH_TOKEN)
 
     print(f"Location: {my_weather.name}")
-    print(f"Weather: {my_weather.weather.main}, {my_weather.weather.description}")
     print(f"Condition ID: {my_weather.weather.condition_id}")
     print(f"Clouds: {my_weather.weather.clouds}%")
     print(f"Adverse conditions: {my_weather.has_adverse_conditions()}")

@@ -10,12 +10,14 @@ https://github.com/MylesMor/nanoleafapi
 import colorsys
 import json
 import logging
+from typing import Any, Optional
 
 import requests
 from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException, Timeout
-from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_JSON_HEADERS = {"Content-Type": "application/json"}
 
 
 # ---------------------------------------------------------------------------
@@ -42,20 +44,18 @@ class NanoleafRequestError(NanoleafError):
 # Main class
 # ---------------------------------------------------------------------------
 
-class nanoleafLight:
-    def __init__(self, name: str, ip: str, auth_token: str = "", port: str = "16021"):
+class NanoleafLight:
+    def __init__(self, name: str, ip: str, auth_token: str = "", port: int = 16021):
         self.name = name
         self.ip = ip
         self.port = port
         self.auth_token = auth_token
-        self.url = f"http://{ip}:{port}/api/v1/{auth_token}"
+        # _base_url omits the token so the attribute is safe to log.
+        # The full URL (with token) is assembled inside _request only.
+        self._base_url = f"http://{ip}:{port}/api/v1"
 
     def __str__(self) -> str:
-        return f"{self.name}: {self.ip} - Auth setup: {self.isAuthTokenSetup()}"
-
-    def isAuthTokenSetup(self) -> bool:
-        """Return True if an auth token has been provided."""
-        return bool(self.auth_token)
+        return f"{self.name}: {self.ip} - Auth setup: {bool(self.auth_token)}"
 
     # ------------------------------------------------------------------
     # Internal request helper
@@ -65,20 +65,29 @@ class nanoleafLight:
         """Execute an HTTP request with timeouts and exception mapping.
 
         All public methods route through here so timeout and error handling
-        are applied consistently.
+        are applied consistently. PUT requests automatically include
+        Content-Type: application/json when a body is present.
 
         :raises NanoleafConnectionError: on network failure or timeout
         :raises NanoleafAuthError: on 401/403
         :raises NanoleafRequestError: on other non-2xx HTTP status
         """
         kwargs.setdefault("timeout", (3, 5))
-        url = self.url + path
+        if "data" in kwargs:
+            headers = dict(kwargs.get("headers", {}))
+            headers.setdefault("Content-Type", "application/json")
+            kwargs["headers"] = headers
+        url = f"{self._base_url}/{self.auth_token}{path}"
         try:
             response = requests.request(method, url, **kwargs)
         except (RequestsConnectionError, Timeout) as exc:
-            raise NanoleafConnectionError(str(exc)) from exc
+            raise NanoleafConnectionError(
+                f"Connection failed to {self.ip}:{self.port}"
+            ) from exc
         except RequestException as exc:
-            raise NanoleafConnectionError(str(exc)) from exc
+            raise NanoleafConnectionError(
+                f"Request failed to {self.ip}:{self.port}"
+            ) from exc
 
         if response.status_code in (200, 204):
             return response
@@ -127,6 +136,9 @@ class nanoleafLight:
                 "ct": state["ct"]["value"],
                 "colorMode": state["colorMode"],
             }
+        except NanoleafAuthError as exc:
+            logger.warning("get_full_state: auth error (%s)", exc)
+            return {}
         except NanoleafError:
             return {}
         except (KeyError, ValueError) as exc:
@@ -142,6 +154,9 @@ class nanoleafLight:
         try:
             self._request("PUT", "/state", data=json.dumps({"on": {"value": False}}))
             return True
+        except NanoleafAuthError as exc:
+            logger.warning("power_off: auth error (%s)", exc)
+            return False
         except NanoleafError:
             return False
 
@@ -150,6 +165,9 @@ class nanoleafLight:
         try:
             self._request("PUT", "/state", data=json.dumps({"on": {"value": True}}))
             return True
+        except NanoleafAuthError as exc:
+            logger.warning("power_on: auth error (%s)", exc)
+            return False
         except NanoleafError:
             return False
 
@@ -159,6 +177,8 @@ class nanoleafLight:
             response = self._request("GET", "/state/on")
             return json.loads(response.text)["value"]
         except NanoleafError:
+            return False
+        except (KeyError, ValueError):
             return False
 
     # ------------------------------------------------------------------
@@ -171,19 +191,19 @@ class nanoleafLight:
         saturation: int,
         brightness: int,
         duration: int = 0,
-        on: bool | None = None,
+        on: Optional[bool] = None,
     ) -> bool:
         """Set hue, saturation, and brightness in a single batched PUT /state call.
 
-        :param hue: 0–360
+        :param hue: 0–359 (Nanoleaf API range; 360 is not a valid value)
         :param saturation: 0–100
         :param brightness: 0–100
         :param duration: transition duration in tenths of a second (0 = instant)
         :param on: if provided, include power state in the same call (True=on, False=off)
         :returns: True if successful, otherwise False
         """
-        if not 0 <= hue <= 360:
-            raise ValueError("Hue should be between 0 and 360")
+        if not 0 <= hue <= 359:
+            raise ValueError("Hue should be between 0 and 359")
         if not 0 <= saturation <= 100:
             raise ValueError("Saturation should be between 0 and 100")
         if not 0 <= brightness <= 100:
@@ -206,7 +226,7 @@ class nanoleafLight:
         ct: int,
         brightness: int,
         duration: int = 0,
-        on: bool | None = None,
+        on: Optional[bool] = None,
     ) -> bool:
         """Set colour temperature and brightness in a single batched PUT /state call.
 
@@ -232,17 +252,22 @@ class nanoleafLight:
         except NanoleafError:
             return False
 
-    def set_color(self, rgb: tuple[int, int, int]) -> bool:
+    def set_color(
+        self,
+        rgb: tuple[int, int, int],
+        on: Optional[bool] = None,
+    ) -> bool:
         """Set the light colour from an RGB tuple via a batched /state call.
 
         Converts RGB (0–255 per channel) to HSB using colorsys, then sends
-        a single batched PUT. Used primarily by party mode's --color option.
+        a single batched PUT. Used by callers that work in RGB color space.
 
         :param rgb: (r, g, b) tuple, each channel 0–255
+        :param on: if provided, include power state in the same call (True=on, False=off)
         :returns: True if successful, otherwise False
         """
         r, g, b = rgb
         if not all(0 <= c <= 255 for c in (r, g, b)):
             raise ValueError("RGB channels must each be between 0 and 255")
         h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-        return self.set_hsb(round(h * 360), round(s * 100), round(v * 100))
+        return self.set_hsb(round(h * 360), round(s * 100), round(v * 100), on=on)

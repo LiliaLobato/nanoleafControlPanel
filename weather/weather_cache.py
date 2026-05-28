@@ -12,6 +12,7 @@ from typing import Optional
 from weather.openWeather import OpenWeatherLight
 
 from controller.config import Config
+from controller.dateTime import parse_iso
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def _is_anchor_time(now: datetime, config: Config) -> bool:
     ]
     now_minute = now.hour * 60 + now.minute
     return any(
-        anchor.hour * 60 + anchor.minute <= now_minute < anchor.hour * 60 + anchor.minute + 5
+        anchor.hour * 60 + anchor.minute <= now_minute < min(anchor.hour * 60 + anchor.minute + 5, 1440)
         for anchor in anchors
     )
 
@@ -36,7 +37,7 @@ def _is_weather_cache_fresh(state: dict, now: datetime, config: Config) -> bool:
     cache = state.get("weather_cache")
     if not cache or not cache.get("fetched_at"):
         return False
-    fetched_at = datetime.fromisoformat(cache["fetched_at"])
+    fetched_at = parse_iso(cache["fetched_at"])
     return (now - fetched_at).total_seconds() / 3600 < config.weather_cache_max_age_hours
 
 
@@ -50,7 +51,7 @@ def should_refresh_weather(state: dict, now: datetime, config: Config) -> bool:
         return True
     failure = state.get("weather_failure_state", {})
     next_retry = failure.get("next_retry_at")
-    if next_retry and datetime.fromisoformat(next_retry) > now:
+    if next_retry and parse_iso(next_retry) > now:
         return False  # in backoff, not an anchor — skip
     return not _is_weather_cache_fresh(state, now, config)
 
@@ -66,6 +67,13 @@ def get_weather(state: dict, now: datetime, config: Config) -> Optional[OpenWeat
     lon   = os.getenv("OPENWEATHER_LONGITUDE")
     token = os.getenv("OPENWEATHER_AUTH_TOKEN")
     failure = state["weather_failure_state"]
+
+    # Config error: missing env vars — log once and skip both fetch and failure counter.
+    if not lat or not lon or not token:
+        logger.error(
+            "OPENWEATHER_LATITUDE, OPENWEATHER_LONGITUDE, and OPENWEATHER_AUTH_TOKEN must all be set"
+        )
+        return None
 
     if should_refresh_weather(state, now, config):
         try:
@@ -87,14 +95,13 @@ def get_weather(state: dict, now: datetime, config: Config) -> Optional[OpenWeat
             failure["consecutive_failures"] += 1
             failure["last_failure_at"] = now.isoformat()
             n = failure["consecutive_failures"]
-            backoff_min = config.backoff_schedule_minutes[
-                min(n - 1, len(config.backoff_schedule_minutes) - 1)
-            ]
+            schedule = config.backoff_schedule_minutes or [5]
+            backoff_min = schedule[min(n - 1, len(schedule) - 1)]
             retry_at = now + timedelta(minutes=backoff_min)
             failure["next_retry_at"] = retry_at.isoformat()
             logger.warning(
                 "Weather API failure %d/%d, backing off until %s (%s)",
-                n, len(config.backoff_schedule_minutes),
+                n, len(schedule),
                 retry_at.strftime("%H:%M"), exc,
             )
 
@@ -128,12 +135,15 @@ def evaluate_day_darkness(
     """
     last_toggle = state.get("last_daytime_toggle_at")
     if last_toggle:
-        elapsed_min = (now - datetime.fromisoformat(last_toggle)).total_seconds() / 60
-        if elapsed_min < config.day_toggle_lockout_minutes:
+        elapsed_min = (now - parse_iso(last_toggle)).total_seconds() / 60
+        # Guard against clock skew (NTP correction backward): a negative elapsed_min
+        # would keep the lockout active indefinitely, so we skip it in that case.
+        if 0 <= elapsed_min < config.day_toggle_lockout_minutes:
             last_applied = state.get("last_applied") or {}
             return bool(last_applied.get("power", False))
 
     if not weather:
+        logger.debug("evaluate_day_darkness: no weather data — assuming light outside (lamp stays off)")
         return False
     return weather.is_dark_outside(
         config.dark_sun_elevation_deg, config.dark_cloud_threshold, at=now

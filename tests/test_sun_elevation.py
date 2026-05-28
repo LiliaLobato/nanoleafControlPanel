@@ -77,6 +77,16 @@ class TestSunElevation:
 
 
 class TestJulianDate:
+    """Tests for the internal _julian_date helper.
+
+    _julian_date accepts any datetime (naive or aware) and uses .hour/.minute/.second
+    directly. The public get_sun_elevation() converts to UTC before calling it, so the
+    public API is safe. Passing a naive datetime to _julian_date is unsupported — it
+    will produce a result as if the time were UTC, which is silently wrong for non-UTC
+    inputs. No test covers the naive-datetime path because it is an unsupported usage;
+    this comment documents the implicit contract.
+    """
+
     def test_j2000_epoch(self):
         """J2000.0 epoch (2000-01-01 12:00 UTC) should be JD 2451545.0."""
         j2000 = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)

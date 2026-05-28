@@ -2,6 +2,9 @@
 
 NOAA solar position algorithm. Computes sun elevation angle from geographic
 coordinates and UTC datetime.
+
+Algorithm reference: NOAA Solar Calculator spreadsheet
+https://gml.noaa.gov/grad/solcalc/calcdetails.html
 """
 
 import math
@@ -45,6 +48,11 @@ def get_sun_elevation(
         Timezone-aware datetime to evaluate. Defaults to the current UTC time.
         Raises ValueError if a naive datetime is provided.
     """
+    if not -90 <= latitude <= 90:
+        raise ValueError(f"latitude {latitude!r} out of range [-90, 90]")
+    if not -180 <= longitude <= 180:
+        raise ValueError(f"longitude {longitude!r} out of range [-180, 180]")
+
     if at is None:
         at = datetime.now(tz=dt_timezone.utc)
     elif at.tzinfo is None:
@@ -99,9 +107,9 @@ def get_sun_elevation(
 
     # Hour angle
     utc_hours = at.hour + at.minute / 60.0 + at.second / 3600.0
+    # Python's % always returns non-negative for a positive divisor, so
+    # true_solar_time is guaranteed to be in [0, 1440).
     true_solar_time = (utc_hours * 60 + eq_of_time + 4 * longitude) % 1440
-    if true_solar_time < 0:
-        true_solar_time += 1440
 
     hour_angle = true_solar_time / 4 - 180
     if hour_angle < -180:

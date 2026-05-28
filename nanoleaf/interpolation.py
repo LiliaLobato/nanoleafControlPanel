@@ -30,7 +30,10 @@ def interpolate_profiles(start: LightProfile, end: LightProfile, t: float) -> Li
     3. Cross-mode (CT↔HSB): snap to target color, ramp brightness only
     4. Same mode CT: lerp ct + brightness
     5. Same mode HSB: lerp_hue(hue) + lerp sat + lerp brightness
+
+    t is clamped to [0.0, 1.0] — callers should not rely on extrapolation behaviour.
     """
+    t = max(0.0, min(1.0, t))
     if end.brightness == 0:
         return LightProfile(
             mode=start.mode, hue=start.hue, saturation=start.saturation,

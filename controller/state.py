@@ -14,7 +14,7 @@ from typing import Optional
 import filelock
 
 from controller.config import Config
-from controller.dateTime import combine
+from controller.dateTime import combine, parse_iso
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +65,35 @@ def load_state() -> dict:
         return _empty_state()
     try:
         with open(STATE_PATH) as f:
-            return json.load(f)
+            state = json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("load_state: could not read %s (%s) — starting fresh", STATE_PATH, exc)
         return _empty_state()
+
+    # Schema migration: ensure nested dicts added in later versions exist so
+    # callers can do direct key access without KeyError on old state files.
+    state.setdefault("lamp_failure_state", {})
+    lfs = state["lamp_failure_state"]
+    lfs.setdefault("consecutive_failures", 0)
+    lfs.setdefault("last_failure_at", None)
+    lfs.setdefault("last_failure_type", None)
+    lfs.setdefault("next_retry_at", None)
+
+    state.setdefault("weather_failure_state", {})
+    wfs = state["weather_failure_state"]
+    wfs.setdefault("consecutive_failures", 0)
+    wfs.setdefault("last_failure_at", None)
+    wfs.setdefault("next_retry_at", None)
+
+    state.setdefault("party_mode", {"active": False})
+    return state
+
+
+def _strict_json_default(obj: object) -> None:
+    raise TypeError(
+        f"save_state: non-serializable value of type {type(obj).__name__!r} — "
+        "call .isoformat() on datetimes, dataclasses.asdict() on dataclasses"
+    )
 
 
 def save_state(state: dict) -> None:
@@ -76,7 +101,7 @@ def save_state(state: dict) -> None:
     _ensure_state_dir()
     tmp = STATE_PATH.parent / (STATE_PATH.name + ".tmp")
     with open(tmp, "w") as f:
-        json.dump(state, f, indent=2, default=str)
+        json.dump(state, f, indent=2, default=_strict_json_default)
     os.replace(tmp, STATE_PATH)
 
 
@@ -84,17 +109,19 @@ def save_state(state: dict) -> None:
 # Cron overlap lock
 # ---------------------------------------------------------------------------
 
-def acquire_run_lock() -> filelock.FileLock:
-    """Acquire the single-instance run lock.
+def get_run_lock() -> filelock.FileLock:
+    """Return the single-instance run lock (not yet acquired).
 
-    Returns the held lock on success. Raises filelock.Timeout immediately if
-    another instance of the controller is already running, so the caller can
-    exit silently without waiting.
+    Use as a context manager: ``with get_run_lock(): ...``
+    The context manager calls acquire(timeout=0), raising filelock.Timeout
+    immediately if another instance is already running.
     """
     _ensure_state_dir()
-    lock = filelock.FileLock(str(LOCK_PATH), timeout=0)
-    lock.acquire()
-    return lock
+    return filelock.FileLock(str(LOCK_PATH), timeout=0)
+
+
+# Backwards-compatible alias — prefer get_run_lock() in new code.
+acquire_run_lock = get_run_lock
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +133,9 @@ def apply_dnd_flag(state: dict, phase: str, now: datetime, config: Config) -> No
 
     morning_ramp scope: clears at full_morning_time today.
     overnight scope:    clears at next morning ramp start (evening/night phases).
-    Day and late-night phases do not trigger DND.
+    day phase:          intentional no-op — oscillation lockout handles re-evaluation.
+    off/pre_morning:    intentional no-op — lamp is already supposed to be off.
+    party_mode / late_night_override: handled separately by _run() before this is called.
     """
     if phase == "morning_ramp":
         state["do_not_disturb_until"] = combine(now, config.full_morning_time).isoformat()
@@ -116,6 +145,8 @@ def apply_dnd_flag(state: dict, phase: str, now: datetime, config: Config) -> No
         dnd_until = datetime.combine(tomorrow, config.full_morning_time).replace(tzinfo=now.tzinfo)
         state["do_not_disturb_until"] = dnd_until.isoformat()
         state["dnd_scope"] = "overnight"
+    # All other phases (day, off, pre_morning, party_mode, late_night_override):
+    # no DND is set — see docstring for rationale.
 
 
 def should_respect_dnd(state: dict, now: datetime) -> bool:
@@ -123,7 +154,7 @@ def should_respect_dnd(state: dict, now: datetime) -> bool:
     dnd_until = state.get("do_not_disturb_until")
     if not dnd_until:
         return False
-    return datetime.fromisoformat(dnd_until) > now
+    return parse_iso(dnd_until) > now
 
 
 def clear_dnd_if_expired(
@@ -149,7 +180,7 @@ def clear_dnd_if_expired(
     elif scope == "overnight":
         morning_latest = combine(now, config.morning_latest_start)
         if weather:
-            morning_ramp_start = min(weather.get_sunrise_dt(), morning_latest)
+            morning_ramp_start = min(weather.get_sunrise_dt(tz=now.tzinfo), morning_latest)
         else:
             morning_ramp_start = morning_latest
         if now >= morning_ramp_start:
@@ -166,12 +197,14 @@ def is_lamp_in_backoff(state: dict, now: datetime) -> bool:
     next_retry = state.get("lamp_failure_state", {}).get("next_retry_at")
     if not next_retry:
         return False
-    return datetime.fromisoformat(next_retry) > now
+    return parse_iso(next_retry) > now
 
 
 def handle_lamp_success(state: dict) -> None:
     """Reset lamp failure state after a successful API call."""
-    failure = state["lamp_failure_state"]
+    failure = state.get("lamp_failure_state")
+    if not failure:
+        return
     if failure["consecutive_failures"] > 0:
         logger.info(
             "Lamp recovered after %d consecutive failures",
@@ -190,9 +223,8 @@ def handle_lamp_failure(state: dict, now: datetime, config: Config, exc: Excepti
     failure["last_failure_at"] = now.isoformat()
     failure["last_failure_type"] = type(exc).__name__
     n = failure["consecutive_failures"]
-    backoff_min = config.backoff_schedule_minutes[
-        min(n - 1, len(config.backoff_schedule_minutes) - 1)
-    ]
+    schedule = config.backoff_schedule_minutes or [5]
+    backoff_min = schedule[min(n - 1, len(schedule) - 1)]
     retry_at = now + timedelta(minutes=backoff_min)
     failure["next_retry_at"] = retry_at.isoformat()
     state["last_error"] = {

@@ -20,12 +20,12 @@ pytestmark = pytest.mark.skipif(not RUN_E2E, reason="Set RUN_E2E=1 to run live l
 
 @pytest.fixture(scope="module")
 def light():
-    from nanoleaf.nanoleafLight import nanoleafLight
+    from nanoleaf.nanoleafLight import NanoleafLight
 
     name = os.environ["NANOLEAF_NAME"]
     ip = os.environ["NANOLEAF_IP_ADDRESS"]
     token = os.environ["NANOLEAF_AUTH_TOKEN"]
-    lamp = nanoleafLight(name=name, ip=ip, auth_token=token)
+    lamp = NanoleafLight(name=name, ip=ip, auth_token=token)
     assert lamp.check_heartbeat(), "Lamp is not reachable — check IP and token in .env"
     return lamp
 
@@ -116,6 +116,12 @@ def test_fade(light):
     light.set_hsb(10, 80, 5)
     time.sleep(1)
 
+    # Record baseline before starting the fade so the assertion compares against
+    # the actual starting brightness, not a mid-ramp poll that may miss the low end.
+    baseline_state = light.get_full_state()
+    baseline = baseline_state.get("brightness", 5) if baseline_state else 5
+    print(f"Baseline brightness before fade: {baseline}")
+
     # 10-second fade to brightness 100 (duration=100 = 10s in Nanoleaf units)
     light.set_hsb(10, 80, 100, duration=100)
 
@@ -126,10 +132,9 @@ def test_fade(light):
         time.sleep(1)
 
     print("Brightness readings during fade:", readings)
-    # Value should increase overall (not necessarily monotonic due to polling granularity)
     non_none = [r for r in readings if r is not None]
     assert len(non_none) >= 5, "Could not read brightness during fade"
-    assert non_none[-1] > non_none[0], "Brightness did not increase during fade"
+    assert non_none[-1] > baseline, "Brightness did not increase during fade"
 
 
 # ---------------------------------------------------------------------------

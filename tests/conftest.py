@@ -1,4 +1,4 @@
-"""Shared fixtures and helpers for the openWeather test suite."""
+"""Shared fixtures and helpers for the controller test suite."""
 
 import json
 from pathlib import Path

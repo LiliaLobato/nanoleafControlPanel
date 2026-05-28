@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field, fields
 from datetime import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from controller.dateTime import parse_time
 
@@ -89,7 +89,7 @@ class Config:
     party_default_fade_minutes: int = 30
 
     # --- Failure backoff ---
-    backoff_schedule_minutes: list = field(default_factory=lambda: [5, 10, 20, 40, 60])
+    backoff_schedule_minutes: list[int] = field(default_factory=lambda: [5, 10, 20, 40, 60])
 
     # --- Verbose logging ---
     verbose: bool = False
@@ -101,7 +101,7 @@ class Config:
 
 @dataclass
 class LightProfile:
-    mode: str           # "hsb" or "ct"
+    mode: Literal["hsb", "ct"]
     hue: int = 0
     saturation: int = 0
     brightness: int = 0
@@ -159,10 +159,48 @@ def load_config() -> Config:
             continue
         try:
             current = getattr(config, key)
-            if isinstance(current, time):
+            # bool must be checked before int — bool is a subclass of int
+            if isinstance(current, bool):
+                if not isinstance(value, bool):
+                    raise TypeError(f"expected bool, got {type(value).__name__!r}")
+            elif isinstance(current, time):
                 value = parse_time(value)
+            elif isinstance(current, int):
+                if isinstance(value, float):
+                    logger.warning(
+                        "load_config: %r expects int, got float %.4g — truncating to %d",
+                        key, value, int(value),
+                    )
+                value = int(value)
+            elif isinstance(current, float):
+                value = float(value)
+            elif isinstance(current, list):
+                if not isinstance(value, list):
+                    raise TypeError(f"expected list, got {type(value).__name__!r}")
+                if not all(isinstance(x, int) for x in value):
+                    raise TypeError("expected list[int], got non-int element")
             setattr(config, key, value)
         except (ValueError, TypeError) as exc:
             logger.warning("load_config: invalid value for %r (%s) — keeping default", key, exc)
+
+    # Cross-field time-ordering checks: inverted times create unreachable phases.
+    if config.full_morning_time <= config.morning_latest_start:
+        logger.warning(
+            "load_config: full_morning_time (%s) must be after morning_latest_start (%s) "
+            "— morning_ramp phase will be unreachable",
+            config.full_morning_time, config.morning_latest_start,
+        )
+    if config.night_full_time <= config.force_evening_time:
+        logger.warning(
+            "load_config: night_full_time (%s) must be after force_evening_time (%s) "
+            "— night_ramp phase will be unreachable",
+            config.night_full_time, config.force_evening_time,
+        )
+    if config.hard_cutoff_time <= config.night_full_time:
+        logger.warning(
+            "load_config: hard_cutoff_time (%s) must be after night_full_time (%s) "
+            "— hard_cutoff_ramp phase will be unreachable",
+            config.hard_cutoff_time, config.night_full_time,
+        )
 
     return config
