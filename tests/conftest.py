@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from openWeather import OpenWeatherLight
+from weather.openWeather import OpenWeatherLight
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
