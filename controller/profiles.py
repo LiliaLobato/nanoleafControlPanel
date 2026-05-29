@@ -7,7 +7,7 @@ including the two-stage morning ramp. apply_profile() lives here too.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from controller.config import (
     Config,
@@ -171,11 +171,14 @@ def apply_profile(
 
     if not should_be_on:
         if currently_on:
-            # Lamp is on and we want it off — send only the power-off command.
-            # Sending a staged color (often higher brightness than current) in the
-            # same PUT causes a visible flash before the power-off takes effect.
+            # Lamp is on and should be off — send only the power-off command.
+            # Sending a staged color alongside on=False causes a visible flash.
             return light.power_off()
-        on_value: Union[bool, None] = False   # already off; include on=False to block silent pre-staging power-on
+        # Lamp is already off — skip the color update entirely.
+        # Sending any HSB/CT update (even with on=False) can cause a brief flash
+        # on some Nanoleaf firmware. Pre-staging is unnecessary: if the user
+        # manually turns the lamp on, late_night_trigger fires on the next tick.
+        return True
     elif not currently_on:
         on_value = True                    # turn on with the color in one call
     else:
