@@ -1,7 +1,8 @@
 """status command — phase, weather, lamp state, party, DND, errors."""
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from controller.config import CONFIG_PATH, load_config
 from controller.dateTime import parse_iso
@@ -14,7 +15,8 @@ def run(args, now=None):
     verbose = getattr(args, "verbose", False)
 
     if now is None:
-        now = datetime.now(tz=timezone.utc)
+        local_tz = ZoneInfo(os.getenv("TIMEZONE", "America/Los_Angeles"))
+        now = datetime.now(tz=local_tz)
 
     config = load_config()
     state = load_state()
