@@ -76,9 +76,9 @@ echo "      $BIN_DIR"
 # 3. Install Python dependencies
 echo "[3/7] Installing Python dependencies..."
 if $DRY_RUN; then
-    echo "  [dry-run] $PYTHON -m pip install --quiet -r $REPO_DIR/requirements.txt"
+    echo "  [dry-run] $PYTHON -m pip install --quiet --break-system-packages -r $REPO_DIR/requirements.txt"
 else
-    $PYTHON -m pip install --quiet -r "$REPO_DIR/requirements.txt"
+    $PYTHON -m pip install --quiet --break-system-packages -r "$REPO_DIR/requirements.txt"
 fi
 echo "      done"
 
