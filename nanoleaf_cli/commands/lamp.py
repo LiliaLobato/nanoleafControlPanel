@@ -8,10 +8,10 @@ from nanoleaf_cli._formatting import print_error
 
 
 def _make_light() -> NanoleafLight:
-    ip = os.getenv("NANOLEAF_IP")
+    ip = os.getenv("NANOLEAF_IP_ADDRESS")
     token = os.getenv("NANOLEAF_AUTH_TOKEN")
     if not ip:
-        print_error("NANOLEAF_IP is not set")
+        print_error("NANOLEAF_IP_ADDRESS is not set")
     if not token:
         print_error("NANOLEAF_AUTH_TOKEN is not set")
     return NanoleafLight("nanoleaf", ip, token)

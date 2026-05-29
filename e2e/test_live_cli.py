@@ -71,10 +71,10 @@ def _make_weather(sunrise_hour=5, sunrise_min=30, sunset_hour=20, fixture="clear
 @pytest.fixture(scope="module")
 def light():
     from nanoleaf.nanoleafLight import NanoleafLight
-    ip    = os.environ["NANOLEAF_IP"]
+    ip    = os.environ["NANOLEAF_IP_ADDRESS"]
     token = os.environ["NANOLEAF_AUTH_TOKEN"]
     lamp  = NanoleafLight(name="nanoleaf", ip=ip, auth_token=token)
-    assert lamp.check_heartbeat(), "Lamp unreachable — check NANOLEAF_IP and NANOLEAF_AUTH_TOKEN in .env"
+    assert lamp.check_heartbeat(), "Lamp unreachable — check NANOLEAF_IP_ADDRESS and NANOLEAF_AUTH_TOKEN in .env"
     return lamp
 
 
