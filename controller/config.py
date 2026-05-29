@@ -113,22 +113,22 @@ class LightProfile:
 SUNRISE_START_PROFILE = LightProfile(mode="hsb", hue=20, saturation=70, brightness=5)
 
 # Sunrise end / morning ramp stage 1 target: warm bright (end of stage 1)
-SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=90)
+SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=70)
 
 # Morning: cool blue-white, energizing (stage 2 target — final morning state)
-MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=100)
+MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=75)
 
 # Daytime-on (used when outside is dark): amber, soft
-DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=30, saturation=50, brightness=60)
+DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=30, saturation=50, brightness=45)
 
 # Night: deep warm red-orange, cozy, dim
-NIGHT_PROFILE = LightProfile(mode="hsb", hue=15, saturation=80, brightness=20)
+NIGHT_PROFILE = LightProfile(mode="hsb", hue=8, saturation=80, brightness=20)
 
 # Late-night manual override: warm, low, visible
-LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=15, saturation=75, brightness=35)
+LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=8, saturation=75, brightness=25)
 
 # Default party profile: vivid purple, full brightness
-PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=100)
+PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=75)
 
 # Off target (brightness=0 signals power-off intent to interpolate_profiles)
 OFF_PROFILE = LightProfile(mode="hsb", brightness=0)
