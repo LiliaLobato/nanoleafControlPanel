@@ -98,7 +98,28 @@ assert_exit() {
 # ── Test fixture setup ────────────────────────────────────────────────────────
 
 TMPDIR_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_ROOT"' EXIT
+
+# Save the real crontab once before any tests run, then clear the controller
+# entry so every run_deploy starts with no existing entry (uses "add" path,
+# not "replace" path) and never corrupts the real crontab.
+_REAL_CRONTAB="$(crontab -l 2>/dev/null || true)"
+if command -v crontab &>/dev/null; then
+    (echo "$_REAL_CRONTAB" | grep -vF "sunrise_sunset_controller.py" || true) | crontab - 2>/dev/null || true
+fi
+trap '
+    if command -v crontab &>/dev/null; then
+        echo "$_REAL_CRONTAB" | crontab - 2>/dev/null || crontab -r 2>/dev/null || true
+    fi
+    rm -rf "$TMPDIR_ROOT"
+' EXIT
+
+# Reset the live crontab to no-controller state between tests so each
+# run_deploy starts clean (prevents tmp-path entries accumulating).
+reset_crontab() {
+    if command -v crontab &>/dev/null; then
+        (crontab -l 2>/dev/null | grep -vF "sunrise_sunset_controller.py" || true) | crontab - 2>/dev/null || true
+    fi
+}
 
 new_home() {
     # Create a fresh fake HOME for each test group.
@@ -248,6 +269,7 @@ fi
 # GROUP 4 — Symlink scenarios
 # ═══════════════════════════════════════════════════════════════════════════════
 echo
+reset_crontab
 echo "── Group 4: symlink edge cases ──"
 
 start_test "stale symlink pointing at wrong target gets updated"
@@ -274,6 +296,7 @@ fi
 # GROUP 5 — .env presence / absence
 # ═══════════════════════════════════════════════════════════════════════════════
 echo
+reset_crontab
 echo "── Group 5: .env file handling ──"
 
 start_test ".env missing → warning printed"
@@ -304,6 +327,7 @@ fi
 # GROUP 6 — config.json permissions
 # ═══════════════════════════════════════════════════════════════════════════════
 echo
+reset_crontab
 echo "── Group 6: config.json permissions ──"
 
 start_test "no config.json → no config.json chmod output"
@@ -360,6 +384,7 @@ fi
 # GROUP 8 — Timezone check
 # ═══════════════════════════════════════════════════════════════════════════════
 echo
+reset_crontab
 echo "── Group 8: timezone check ──"
 
 start_test "timezone section always prints"
@@ -381,6 +406,7 @@ fi
 # GROUP 9 — Python import smoke-check
 # ═══════════════════════════════════════════════════════════════════════════════
 echo
+reset_crontab
 echo "── Group 9: import smoke-check ──"
 
 start_test "smoke-check runs even in --dry-run mode"
@@ -401,6 +427,7 @@ assert_contains "Verifying Python imports" && pass
 # GROUP 10 — Output structure and next-steps
 # ═══════════════════════════════════════════════════════════════════════════════
 echo
+reset_crontab
 echo "── Group 10: output structure ──"
 
 start_test "all 7 step headers present in dry-run"

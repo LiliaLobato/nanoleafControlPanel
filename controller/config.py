@@ -118,14 +118,15 @@ SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness
 # Morning: cool blue-white, energizing (stage 2 target — final morning state)
 MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=55)
 
-# Daytime-on (used when outside is dark): amber, soft
-DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=30, saturation=50, brightness=33)
+# Daytime-on (used when outside is dark): reddish-warm, soft
+# Hue 320 = device-calibrated red on this Nanoleaf (standard hue 0 appears orange)
+DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=320, saturation=30, brightness=33)
 
-# Night: deep red, cozy, dim — high saturation keeps wavelength close to pure red (melatonin-safe)
-NIGHT_PROFILE = LightProfile(mode="hsb", hue=0, saturation=90, brightness=20)
+# Night: deep red, cozy, dim
+NIGHT_PROFILE = LightProfile(mode="hsb", hue=320, saturation=40, brightness=20)
 
-# Late-night manual override: pure red, low, visible
-LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=4, saturation=90, brightness=25)
+# Late-night manual override: deep red, low, visible
+LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=320, saturation=40, brightness=25)
 
 # Default party profile: vivid purple, full brightness
 PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=55)

@@ -21,9 +21,8 @@ _HUE_DEFAULTS = [
     (161, 200, "cyan"),
     (201, 245, "blue"),
     (246, 280, "purple"),
-    (281, 320, "magenta"),
-    (321, 345, "pink"),
-    (346, 360, "red"),  # red wraps: 346-360 mirrors 0-10 on the colour wheel
+    (281, 315, "magenta"),
+    (316, 360, "red"),  # red wraps: high-hue reds (crimson/deep red) back to 0
 ]
 
 _SAT_DEFAULTS = [

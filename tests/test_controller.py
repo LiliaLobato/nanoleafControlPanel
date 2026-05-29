@@ -635,10 +635,10 @@ class TestDescribeColor:
                 assert result == "off", \
                     f"{label}: expected result 'off', got {result!r}"
             else:
-                # DAYTIME_ON can be orange or amber
+                # DAYTIME_ON is device-calibrated red (hue 320 = red on this Nanoleaf)
                 if label == "DAYTIME_ON profile":
-                    assert "orange" in result or "amber" in result, \
-                        f"{label}: expected 'orange' or 'amber' in result, got {result!r}"
+                    assert "red" in result, \
+                        f"{label}: expected 'red' in result, got {result!r}"
                 else:
                     assert expected_color in result, \
                         f"{label}: expected {expected_color!r} in result, got {result!r}"
