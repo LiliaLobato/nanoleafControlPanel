@@ -171,13 +171,20 @@ def apply_profile(
 
     if not should_be_on:
         if currently_on:
-            # Lamp is on and should be off — send only the power-off command.
-            # Sending a staged color alongside on=False causes a visible flash.
-            return light.power_off()
-        # Lamp is already off — skip the color update entirely.
-        # Sending any HSB/CT update (even with on=False) can cause a brief flash
-        # on some Nanoleaf firmware. Pre-staging is unnecessary: if the user
-        # manually turns the lamp on, late_night_trigger fires on the next tick.
+            # Lamp is on and should be off — write the effective_color to the device
+            # with on=False. This causes one visible flash but encodes the correct
+            # staging color (e.g. LATE_NIGHT) into device memory so the next
+            # manual turn-on shows the right profile immediately at full brightness.
+            if effective_color.mode == "ct":
+                return light.set_color_temp_and_brightness(
+                    effective_color.color_temp, effective_color.brightness, on=False
+                )
+            return light.set_hsb(
+                effective_color.hue, effective_color.saturation, effective_color.brightness, on=False
+            )
+        # Lamp is already off — skip API call entirely.
+        # Staging was written on the turn-off tick; sending it again every cron
+        # tick flashes the panels (any PUT /state flashes this device).
         return True
     elif not currently_on:
         on_value = True                    # turn on with the color in one call
@@ -208,4 +215,8 @@ def calculate_effective_color_profile(
     profiles = load_profiles()
     if phase == "day":
         return profiles["DAYTIME_ON"]
+    if phase == "off":
+        # Use LATE_NIGHT so the turn-off flash writes a visible, correct color
+        # to device memory — manual turn-on during off phase shows this immediately.
+        return profiles["LATE_NIGHT"]
     return profiles["NIGHT"]
