@@ -170,7 +170,12 @@ def apply_profile(
     currently_on = light_state.get("on", False)
 
     if not should_be_on:
-        on_value: Union[bool, None] = False   # keep/set off; blocks side-effect power-on
+        if currently_on:
+            # Lamp is on and we want it off — send only the power-off command.
+            # Sending a staged color (often higher brightness than current) in the
+            # same PUT causes a visible flash before the power-off takes effect.
+            return light.power_off()
+        on_value: Union[bool, None] = False   # already off; include on=False to block silent pre-staging power-on
     elif not currently_on:
         on_value = True                    # turn on with the color in one call
     else:
