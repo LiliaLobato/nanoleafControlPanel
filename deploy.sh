@@ -95,13 +95,16 @@ run chmod +x "$CLI_TARGET"
 
 # 5. Add crontab entry (skip if already present)
 echo "[5/7] Configuring crontab..."
+echo "      entry: $CRON_ENTRY"
 if command -v crontab &>/dev/null; then
     if crontab -l 2>/dev/null | grep -qF "$CONTROLLER"; then
-        echo "      entry already present — skipping"
+        echo "      (already present — skipping)"
     else
-        echo "      adding: $CRON_ENTRY"
         if ! $DRY_RUN; then
             (crontab -l 2>/dev/null || true; echo "$CRON_ENTRY") | crontab -
+            echo "      added"
+        else
+            echo "  [dry-run] crontab add"
         fi
     fi
 else

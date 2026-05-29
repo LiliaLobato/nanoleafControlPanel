@@ -51,10 +51,14 @@ skip_on_windows() {
 }
 
 # Run deploy.sh with HOME overridden to a temp dir so no real dirs are touched.
+# PYTHONUSERBASE is pinned to the real user base so the smoke-check can find
+# packages installed under the real ~/.local even when HOME is overridden.
+REAL_PYTHON_USERBASE="$(python3 -m site --user-base 2>/dev/null || true)"
+
 # Usage: run_deploy [args...]  (sets output in $OUT and exit code in $RC)
 run_deploy() {
     local tmp_home="$TEST_HOME"
-    OUT=$(HOME="$tmp_home" bash "$DEPLOY" "$@" 2>&1)
+    OUT=$(HOME="$tmp_home" PYTHONUSERBASE="$REAL_PYTHON_USERBASE" bash "$DEPLOY" "$@" 2>&1)
     RC=$?
 }
 
