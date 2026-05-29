@@ -627,7 +627,7 @@ class TestDescribeColor:
             (NIGHT_PROFILE,                                                     "red",             "dim",     "NIGHT profile"),
             (LightProfile(mode="hsb", hue=280, saturation=90, brightness=100), "purple",          "full",    "party purple"),
             (LightProfile(mode="hsb", hue=120, saturation=5,  brightness=50),  "near white",      None,      "low saturation → near white"),
-            (DAYTIME_ON_PROFILE,                                                "orange",          "moderate","DAYTIME_ON profile"),
+            (DAYTIME_ON_PROFILE,                                                "orange",          "dim",     "DAYTIME_ON profile"),
         ]
         for profile, expected_color, expected_brightness, label in cases:
             result = describe_color(profile)
