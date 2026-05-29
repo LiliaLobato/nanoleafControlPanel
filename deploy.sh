@@ -43,7 +43,8 @@ BIN_DIR="$HOME/.local/bin"
 CLI_LINK="$BIN_DIR/nanoleaf-cli"
 CLI_TARGET="$REPO_DIR/nanoleaf_cli.py"
 CONTROLLER="$REPO_DIR/sunrise_sunset_controller.py"
-CRON_ENTRY="*/5 * * * * /usr/bin/python3 $CONTROLLER >> $STATE_DIR/cron.log 2>&1"
+PYTHON_PATH="$(command -v "$PYTHON")"
+CRON_ENTRY="*/5 * * * * $PYTHON_PATH $CONTROLLER >> $STATE_DIR/cron.log 2>&1"
 
 echo "=== nanoleafControlPanel deploy ==="
 echo "Repo:    $REPO_DIR"
@@ -53,7 +54,7 @@ echo
 # 1. Verify timezone
 echo "[1/7] Timezone check..."
 if command -v timedatectl &>/dev/null; then
-    CURRENT_TZ="$(timedatectl show --property=Timezone --value 2>/dev/null)"
+    CURRENT_TZ="$(timedatectl show --property=Timezone --value 2>/dev/null || true)"
 elif [ -f /etc/timezone ]; then
     CURRENT_TZ="$(cat /etc/timezone)"
 else
@@ -149,7 +150,9 @@ if ! $DRY_RUN; then
     echo "Next steps:"
     echo "  1. Fix any WARNINGs printed above"
     echo "  2. Ensure .env has all 6 credentials"
-    echo "  3. nanoleaf-cli status        (phase + weather)"
-    echo "  4. nanoleaf-cli lamp info     (device info)"
-    echo "  5. nanoleaf-cli logs -n 20    (watch first cron tick)"
+    echo "  3. Add ~/.local/bin to PATH if needed:"
+    echo "       echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+    echo "  4. nanoleaf-cli status        (phase + weather)"
+    echo "  5. nanoleaf-cli lamp info     (device info)"
+    echo "  6. nanoleaf-cli logs -n 20    (watch first cron tick)"
 fi
