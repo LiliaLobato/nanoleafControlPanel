@@ -100,7 +100,7 @@ if command -v crontab &>/dev/null; then
     else
         echo "      adding: $CRON_ENTRY"
         if ! $DRY_RUN; then
-            (crontab -l 2>/dev/null; echo "$CRON_ENTRY") | crontab -
+            (crontab -l 2>/dev/null || true; echo "$CRON_ENTRY") | crontab -
         fi
     fi
 else
