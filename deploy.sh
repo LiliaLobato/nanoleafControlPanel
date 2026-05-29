@@ -1,9 +1,39 @@
 #!/usr/bin/env bash
 # deploy.sh — Bootstrap nanoleafControlPanel on the Raspberry Pi.
-# Run from the repo root: bash deploy.sh
+#
+# Usage:
+#   bash deploy.sh           # real deploy (Pi / Linux)
+#   bash deploy.sh --dry-run # print what would happen, make no changes
+#
 # Safe to re-run (idempotent).
 
 set -euo pipefail
+
+DRY_RUN=false
+if [[ "${1:-}" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
+
+# Wrap every state-changing call through run() so --dry-run is one switch.
+run() {
+    if $DRY_RUN; then
+        echo "  [dry-run] $*"
+    else
+        "$@"
+    fi
+}
+
+# Detect available Python 3 command (test actual execution, not just PATH presence —
+# Windows has a python3.exe stub that opens the Store instead of running Python).
+_find_python() {
+    for cmd in python3 python py; do
+        if $cmd -c "import sys; sys.exit(0 if sys.version_info[0]==3 else 1)" 2>/dev/null; then
+            echo "$cmd"; return 0
+        fi
+    done
+    return 1
+}
+PYTHON="$(_find_python)" || { echo "ERROR: Python 3 not found. Install it and re-run."; exit 1; }
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHARE_DIR="$HOME/.local/share/nanoleafControlPanel"
@@ -16,81 +46,110 @@ CONTROLLER="$REPO_DIR/sunrise_sunset_controller.py"
 CRON_ENTRY="*/5 * * * * /usr/bin/python3 $CONTROLLER >> $STATE_DIR/cron.log 2>&1"
 
 echo "=== nanoleafControlPanel deploy ==="
-echo "Repo: $REPO_DIR"
+echo "Repo:    $REPO_DIR"
+echo "Mode:    $( $DRY_RUN && echo DRY-RUN || echo LIVE )"
 echo
 
 # 1. Verify timezone
-CURRENT_TZ="$(timedatectl show --property=Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo unknown)"
-echo "[1/7] Timezone: $CURRENT_TZ"
+echo "[1/7] Timezone check..."
+if command -v timedatectl &>/dev/null; then
+    CURRENT_TZ="$(timedatectl show --property=Timezone --value 2>/dev/null)"
+elif [ -f /etc/timezone ]; then
+    CURRENT_TZ="$(cat /etc/timezone)"
+else
+    CURRENT_TZ="unknown (timedatectl not available — are you on Linux?)"
+fi
+echo "      current: $CURRENT_TZ"
 if [ "$CURRENT_TZ" != "America/Los_Angeles" ]; then
-    echo "      WARNING: expected America/Los_Angeles — run:"
+    echo "      WARNING: expected America/Los_Angeles — to fix:"
     echo "        sudo timedatectl set-timezone America/Los_Angeles"
 fi
 
 # 2. Create runtime directories
 echo "[2/7] Creating runtime directories..."
-mkdir -p "$SHARE_DIR" "$STATE_DIR" "$CONFIG_DIR" "$BIN_DIR"
+run mkdir -p "$SHARE_DIR" "$STATE_DIR" "$CONFIG_DIR" "$BIN_DIR"
 echo "      $SHARE_DIR"
 echo "      $STATE_DIR"
 echo "      $CONFIG_DIR"
+echo "      $BIN_DIR"
 
 # 3. Install Python dependencies
 echo "[3/7] Installing Python dependencies..."
-pip3 install --quiet -r "$REPO_DIR/requirements.txt"
+if $DRY_RUN; then
+    echo "  [dry-run] $PYTHON -m pip install --quiet -r $REPO_DIR/requirements.txt"
+else
+    $PYTHON -m pip install --quiet -r "$REPO_DIR/requirements.txt"
+fi
 echo "      done"
 
 # 4. Symlink nanoleaf-cli
 echo "[4/7] Setting up nanoleaf-cli symlink..."
+echo "      $CLI_LINK -> $CLI_TARGET"
 if [ -L "$CLI_LINK" ] && [ "$(readlink "$CLI_LINK")" = "$CLI_TARGET" ]; then
-    echo "      already linked: $CLI_LINK -> $CLI_TARGET"
+    echo "      (already correct — skipping)"
 else
-    ln -sf "$CLI_TARGET" "$CLI_LINK"
-    echo "      linked: $CLI_LINK -> $CLI_TARGET"
+    run ln -sf "$CLI_TARGET" "$CLI_LINK"
 fi
-chmod +x "$CLI_TARGET"
+run chmod +x "$CLI_TARGET"
 
 # 5. Add crontab entry (skip if already present)
 echo "[5/7] Configuring crontab..."
-if crontab -l 2>/dev/null | grep -qF "$CONTROLLER"; then
-    echo "      crontab entry already present"
+if command -v crontab &>/dev/null; then
+    if crontab -l 2>/dev/null | grep -qF "$CONTROLLER"; then
+        echo "      entry already present — skipping"
+    else
+        echo "      adding: $CRON_ENTRY"
+        if ! $DRY_RUN; then
+            (crontab -l 2>/dev/null; echo "$CRON_ENTRY") | crontab -
+        fi
+    fi
 else
-    (crontab -l 2>/dev/null; echo "$CRON_ENTRY") | crontab -
-    echo "      added: $CRON_ENTRY"
+    echo "      WARNING: crontab not available — add this manually on the Pi:"
+    echo "        $CRON_ENTRY"
 fi
 
 # 6. Set file permissions
 echo "[6/7] Setting permissions..."
 if [ -f "$REPO_DIR/.env" ]; then
-    chmod 600 "$REPO_DIR/.env"
+    run chmod 600 "$REPO_DIR/.env"
     echo "      .env — 600"
 else
-    echo "      WARNING: .env not found — copy it to $REPO_DIR/.env before running the controller"
+    echo "      WARNING: .env not found — create $REPO_DIR/.env with:"
+    echo "        NANOLEAF_NAME, NANOLEAF_IP_ADDRESS, NANOLEAF_AUTH_TOKEN"
+    echo "        OPENWEATHER_LATITUDE, OPENWEATHER_LONGITUDE, OPENWEATHER_AUTH_TOKEN"
 fi
-chmod 700 "$CONFIG_DIR"
+if [ -d "$CONFIG_DIR" ]; then
+    run chmod 700 "$CONFIG_DIR"
+fi
 if [ -f "$CONFIG_DIR/config.json" ]; then
-    chmod 600 "$CONFIG_DIR/config.json"
+    run chmod 600 "$CONFIG_DIR/config.json"
     echo "      config.json — 600"
 fi
 
-# 7. Smoke-check imports
-echo "[7/7] Verifying imports..."
-python3 - "$REPO_DIR" <<'PYCHECK'
+# 7. Smoke-check imports (always runs, even in dry-run — read-only)
+echo "[7/7] Verifying Python imports..."
+$PYTHON - "$REPO_DIR" <<'PYCHECK'
 import sys
 sys.path.insert(0, sys.argv[1])
-import requests, dotenv, filelock
-from controller.config import load_config
-from controller.state import load_state
-from nanoleaf.nanoleafLight import NanoleafLight
-from nanoleaf_cli import main as cli_main
-print("      all imports OK")
+try:
+    import requests, dotenv, filelock
+    from controller.config import load_config
+    from controller.state import load_state
+    from nanoleaf.nanoleafLight import NanoleafLight
+    from nanoleaf_cli import main as cli_main
+    print("      all imports OK")
+except ImportError as e:
+    print(f"      FAILED: {e}")
+    sys.exit(1)
 PYCHECK
 
 echo
-echo "=== Deploy complete ==="
-echo "Next steps:"
-echo "  1. Verify timezone is America/Los_Angeles (see warning above if shown)"
-echo "  2. Ensure .env is present with NANOLEAF_IP_ADDRESS, NANOLEAF_AUTH_TOKEN,"
-echo "     OPENWEATHER_LATITUDE, OPENWEATHER_LONGITUDE, OPENWEATHER_AUTH_TOKEN"
-echo "  3. Run: nanoleaf-cli status   (should show phase + weather)"
-echo "  4. Run: nanoleaf-cli lamp info (should show device info)"
-echo "  5. Watch first cron tick: nanoleaf-cli logs -n 20"
+echo "=== $( $DRY_RUN && echo Dry-run complete — no changes made || echo Deploy complete ) ==="
+if ! $DRY_RUN; then
+    echo "Next steps:"
+    echo "  1. Fix any WARNINGs printed above"
+    echo "  2. Ensure .env has all 6 credentials"
+    echo "  3. nanoleaf-cli status        (phase + weather)"
+    echo "  4. nanoleaf-cli lamp info     (device info)"
+    echo "  5. nanoleaf-cli logs -n 20    (watch first cron tick)"
+fi
