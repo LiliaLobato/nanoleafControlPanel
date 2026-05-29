@@ -339,8 +339,9 @@ if command -v crontab &>/dev/null; then
     start_test "crontab: re-run reports already present"
     new_home
     _saved_cron="$(crontab -l 2>/dev/null || true)"
-    # Pre-seed crontab with the expected entry
-    (echo "$_saved_cron"; echo "*/5 * * * * /usr/bin/python3 $REPO_DIR/sunrise_sunset_controller.py >> $TEST_HOME/.local/state/nanoleafControlPanel/cron.log 2>&1") | crontab -
+    # First run adds the entry; second run should report already present.
+    crontab - <<< "$_saved_cron" 2>/dev/null || true
+    run_deploy
     run_deploy
     crontab - <<< "$_saved_cron" 2>/dev/null || crontab -r 2>/dev/null || true
     assert_contains "already present" && pass

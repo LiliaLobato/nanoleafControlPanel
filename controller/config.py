@@ -122,7 +122,7 @@ MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=55)
 DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=30, saturation=50, brightness=33)
 
 # Night: deep red, cozy, dim — high saturation keeps wavelength close to pure red (melatonin-safe)
-NIGHT_PROFILE = LightProfile(mode="hsb", hue=8, saturation=90, brightness=20)
+NIGHT_PROFILE = LightProfile(mode="hsb", hue=0, saturation=90, brightness=20)
 
 # Late-night manual override: pure red, low, visible
 LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=4, saturation=90, brightness=25)

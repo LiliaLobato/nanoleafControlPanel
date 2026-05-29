@@ -44,7 +44,7 @@ CLI_LINK="$BIN_DIR/nanoleaf-cli"
 CLI_TARGET="$REPO_DIR/nanoleaf_cli.py"
 CONTROLLER="$REPO_DIR/sunrise_sunset_controller.py"
 PYTHON_PATH="$(command -v "$PYTHON")"
-CRON_ENTRY="*/5 * * * * $PYTHON_PATH $CONTROLLER >> $STATE_DIR/cron.log 2>&1"
+CRON_ENTRY="*/2 * * * * $PYTHON_PATH $CONTROLLER >> $STATE_DIR/cron.log 2>&1"
 
 echo "=== nanoleafControlPanel deploy ==="
 echo "Repo:    $REPO_DIR"
@@ -97,8 +97,16 @@ run chmod +x "$CLI_TARGET"
 echo "[5/7] Configuring crontab..."
 echo "      entry: $CRON_ENTRY"
 if command -v crontab &>/dev/null; then
-    if crontab -l 2>/dev/null | grep -qF "$CONTROLLER"; then
+    if crontab -l 2>/dev/null | grep -qF "$CRON_ENTRY"; then
         echo "      (already present — skipping)"
+    elif crontab -l 2>/dev/null | grep -qF "$CONTROLLER"; then
+        # Entry exists with a different schedule — replace it
+        if ! $DRY_RUN; then
+            (crontab -l 2>/dev/null | grep -vF "$CONTROLLER"; echo "$CRON_ENTRY") | crontab -
+            echo "      updated (replaced old schedule)"
+        else
+            echo "  [dry-run] crontab replace"
+        fi
     else
         if ! $DRY_RUN; then
             (crontab -l 2>/dev/null || true; echo "$CRON_ENTRY") | crontab -
