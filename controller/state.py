@@ -233,10 +233,11 @@ def handle_lamp_failure(state: dict, now: datetime, config: Config, exc: Excepti
         "type": type(exc).__name__,
         "message": str(exc),
     }
+    schedule_len = len(schedule)
+    failure_tag = f"{n}/{schedule_len}" if n <= schedule_len else f"{n} (max backoff)"
     logger.warning(
-        "Lamp API failure %d/%d, backing off until %s (%s)",
-        n, len(config.backoff_schedule_minutes),
-        retry_at.strftime("%H:%M"), exc,
+        "Lamp API failure %s, backing off until %s (%s)",
+        failure_tag, retry_at.strftime("%H:%M"), exc,
     )
 
 

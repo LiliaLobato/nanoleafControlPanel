@@ -170,10 +170,11 @@ def run(now: Optional[datetime] = None) -> None:
         else:
             apply_dnd_flag(state, phase, now, config)
             should_be_on = False
-            logger.info(
-                "Manual OFF detected (phase=%s) — DND until %s",
-                phase, state.get("do_not_disturb_until"),
-            )
+            dnd_until = state.get("do_not_disturb_until")
+            if dnd_until:
+                logger.info("Manual OFF detected (phase=%s) — DND until %s", phase, dnd_until)
+            else:
+                logger.info("Manual OFF detected (phase=%s) — no DND for this phase", phase)
     elif override == "late_night_trigger":
         state["late_night_override"] = {
             "started_at": now.isoformat(),
