@@ -1,10 +1,11 @@
-"""lamp commands — on, off, info."""
+"""lamp commands — on, off, info, ping."""
 
 import json
 import os
 
 from nanoleaf.nanoleafLight import NanoleafLight
 from nanoleaf_cli._formatting import print_error
+from controller.state import load_state, save_state, handle_lamp_success
 
 
 def _make_light() -> NanoleafLight:
@@ -42,3 +43,19 @@ def run_info(args, now=None):
         print(json.dumps(info, indent=2))
     except Exception as exc:
         print_error(f"could not fetch lamp info: {exc}")
+
+
+def run_ping(args, now=None):
+    light = _make_light()
+    reachable = light.check_heartbeat()
+    if reachable:
+        state = load_state()
+        failures = state.get("lamp_failure_state", {}).get("consecutive_failures", 0)
+        handle_lamp_success(state)
+        save_state(state)
+        if failures > 0:
+            print(f"  ✓ lamp reachable — backoff cleared ({failures} failure(s) reset)")
+        else:
+            print("  ✓ lamp reachable — no active backoff")
+    else:
+        print_error("lamp unreachable — backoff not cleared")

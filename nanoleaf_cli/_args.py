@@ -26,6 +26,7 @@ from nanoleaf_cli.commands.lamp import (
     run_on as lamp_on,
     run_off as lamp_off,
     run_info as lamp_info,
+    run_ping as lamp_ping,
 )
 from nanoleaf_cli.commands.status import run as status_run
 from nanoleaf_cli.commands.error import run as error_run
@@ -198,6 +199,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_lamp_info = lamp_sub.add_parser("info", help="dump full device info JSON")
     p_lamp_info.set_defaults(func=lamp_info)
+
+    p_lamp_ping = lamp_sub.add_parser("ping", help="ping lamp and clear backoff if reachable")
+    p_lamp_ping.set_defaults(func=lamp_ping)
 
     # -------------------------------------------------------------------------
     # debug
