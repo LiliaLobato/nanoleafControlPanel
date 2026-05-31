@@ -48,14 +48,17 @@ def run_info(args, now=None):
 def run_ping(args, now=None):
     light = _make_light()
     reachable = light.check_heartbeat()
-    if reachable:
-        state = load_state()
-        failures = state.get("lamp_failure_state", {}).get("consecutive_failures", 0)
-        handle_lamp_success(state)
-        save_state(state)
-        if failures > 0:
-            print(f"  ✓ lamp reachable — backoff cleared ({failures} failure(s) reset)")
-        else:
-            print("  ✓ lamp reachable — no active backoff")
-    else:
+    if not reachable:
         print_error("lamp unreachable — backoff not cleared")
+        return
+    state = load_state()
+    failures = state.get("lamp_failure_state", {}).get("consecutive_failures", 0)
+    handle_lamp_success(state)
+    save_state(state)
+    if failures > 0:
+        print(f"  ✓ lamp reachable — backoff cleared ({failures} failure(s) reset)")
+    else:
+        print("  ✓ lamp reachable — no active backoff")
+    print("  → applying current controller state...")
+    from sunrise_sunset_controller import main as controller_main
+    controller_main(now=now)
