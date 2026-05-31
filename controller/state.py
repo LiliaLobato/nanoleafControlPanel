@@ -99,11 +99,19 @@ def _strict_json_default(obj: object) -> None:
 
 def save_state(state: dict) -> None:
     """Atomically write state to disk via a temp file + os.replace()."""
+    import time as _time
     _ensure_state_dir()
     tmp = STATE_PATH.parent / (STATE_PATH.name + ".tmp")
     with open(tmp, "w") as f:
         json.dump(state, f, indent=2, default=_strict_json_default)
-    os.replace(tmp, STATE_PATH)
+    for attempt in range(3):
+        try:
+            os.replace(tmp, STATE_PATH)
+            return
+        except PermissionError:
+            if attempt == 2:
+                raise
+            _time.sleep(0.01)
 
 
 # ---------------------------------------------------------------------------
