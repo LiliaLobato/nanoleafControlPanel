@@ -31,6 +31,7 @@ from controller.profiles import (
 )
 from controller.state import (
     get_run_lock,
+    get_preview_lock,
     apply_dnd_flag,
     clear_dnd_if_expired,
     detect_manual_override,
@@ -192,6 +193,15 @@ def run(now: Optional[datetime] = None) -> None:
         state["do_not_disturb_until"] = None
         state["dnd_scope"] = None
         logger.info("Manual ON detected (phase=%s) — DND cleared", phase)
+
+    # --- Preview guard ---------------------------------------------------
+    try:
+        with get_preview_lock():
+            pass  # not held; release immediately
+    except filelock.Timeout:
+        logger.info("Preview session active — skipping lamp changes this tick (phase=%s)", phase)
+        save_state(state)
+        return
 
     # --- Apply -----------------------------------------------------------
     logger.debug(

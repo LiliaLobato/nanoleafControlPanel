@@ -18,9 +18,10 @@ from controller.dateTime import combine, parse_iso
 
 logger = logging.getLogger(__name__)
 
-STATE_DIR  = Path.home() / ".local" / "share" / "nanoleafControlPanel"
-STATE_PATH = STATE_DIR / "state.json"
-LOCK_PATH  = STATE_DIR / "controller.lock"
+STATE_DIR        = Path.home() / ".local" / "share" / "nanoleafControlPanel"
+STATE_PATH       = STATE_DIR / "state.json"
+LOCK_PATH        = STATE_DIR / "controller.lock"
+PREVIEW_LOCK_PATH = STATE_DIR / "preview.lock"
 
 
 def _ensure_state_dir() -> None:
@@ -122,6 +123,16 @@ def get_run_lock() -> filelock.FileLock:
 
 # Backwards-compatible alias — prefer get_run_lock() in new code.
 acquire_run_lock = get_run_lock
+
+
+def get_preview_lock() -> filelock.FileLock:
+    """Return the preview lock (not yet acquired).
+
+    Acquired by CLI preview commands; the controller checks it before applying
+    lamp changes and skips the tick if a preview session is active.
+    """
+    _ensure_state_dir()
+    return filelock.FileLock(str(PREVIEW_LOCK_PATH), timeout=0)
 
 
 # ---------------------------------------------------------------------------

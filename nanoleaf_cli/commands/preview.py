@@ -3,6 +3,7 @@
 import time as _time
 
 from controller.config import load_profiles
+from controller.state import get_preview_lock
 from nanoleaf.nanoleafLight import NanoleafLight
 from nanoleaf_cli._lamp_factory import make_light
 from nanoleaf_cli._formatting import print_error
@@ -15,17 +16,18 @@ def _revert(light: NanoleafLight, orig: dict) -> None:
 
 
 def _do_preview(light: NanoleafLight, apply_fn) -> None:
-    orig = light.get_full_state()
-    print("  previewing for 10 seconds...", end="", flush=True)
-    try:
-        apply_fn(light)
-        for i in range(10, 0, -1):
-            print(f"\r  reverting in {i}s...  ", end="", flush=True)
-            _time.sleep(1)
-        print("\r  reverting...               ", end="", flush=True)
-    finally:
-        _revert(light, orig)
-        print("\r  done.                       ")
+    with get_preview_lock():
+        orig = light.get_full_state()
+        print("  previewing for 10 seconds...", end="", flush=True)
+        try:
+            apply_fn(light)
+            for i in range(10, 0, -1):
+                print(f"\r  reverting in {i}s...  ", end="", flush=True)
+                _time.sleep(1)
+            print("\r  reverting...               ", end="", flush=True)
+        finally:
+            _revert(light, orig)
+            print("\r  done.                       ")
 
 
 def run_hue(args, now=None):

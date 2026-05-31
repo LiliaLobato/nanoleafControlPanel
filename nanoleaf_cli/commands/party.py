@@ -92,6 +92,7 @@ def _start(args, now=None):
     state = load_state()
     state["party_mode"] = {
         "active": True,
+        "started_at": now.isoformat(),
         "ends_at": ends_at.isoformat(),
         "fade_minutes": fade_minutes,
         "profile": asdict(party_profile),

@@ -98,6 +98,34 @@ def _lookup(value: int, defaults: list, overrides: dict) -> str:
     return candidates[0][1]
 
 
+def lookup_hue_range(hue: int) -> tuple[int, int, str]:
+    """Return (lo, hi, name) of the narrowest effective range containing hue.
+
+    Checks config overrides first (narrower wins), falls back to _HUE_DEFAULTS.
+    Returns (0, 359, "unknown") when no range covers the hue.
+    """
+    overrides = _load_overrides()
+    candidates: list[tuple[int, int, int, str]] = []
+
+    for start, end, name in _HUE_DEFAULTS:
+        if start <= hue <= end:
+            candidates.append((end - start, start, end, name))
+
+    for range_str, name in overrides.get("color_names", {}).items():
+        try:
+            lo, hi = (int(x) for x in range_str.split("-"))
+            if lo <= hue <= hi:
+                candidates.append((hi - lo, lo, hi, name))
+        except (ValueError, AttributeError):
+            pass
+
+    if not candidates:
+        return (0, 359, "unknown")
+    candidates.sort(key=lambda x: x[0])
+    _, lo, hi, name = candidates[0]
+    return lo, hi, name
+
+
 def rgb_to_hue(r: int, g: int, b: int) -> int:
     """Convert RGB (0–255 each) to a Nanoleaf hue value (0–359)."""
     h, _, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
