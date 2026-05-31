@@ -61,4 +61,13 @@ def run_ping(args, now=None):
         print("  ✓ lamp reachable — no active backoff")
     print("  → applying current controller state...")
     from sunrise_sunset_controller import main as controller_main
+    from controller.config import LightProfile
+    from nanoleaf.color_helper import describe_color
     controller_main(now=now)
+    # Show what was applied by reading back the saved state
+    applied = (load_state().get("last_applied") or {})
+    if applied:
+        profile = applied.get("profile", {})
+        color = describe_color(LightProfile(**profile)) if profile else "?"
+        power = "on" if applied.get("power") else "off"
+        print(f"  ✓ applied: phase={applied.get('phase','?')}  color={color}  lamp={power}")

@@ -214,6 +214,7 @@ def handle_lamp_success(state: dict) -> None:
     failure["last_failure_at"] = None
     failure["last_failure_type"] = None
     failure["next_retry_at"] = None
+    state["last_error"] = None
 
 
 def handle_lamp_failure(state: dict, now: datetime, config: Config, exc: Exception) -> None:
