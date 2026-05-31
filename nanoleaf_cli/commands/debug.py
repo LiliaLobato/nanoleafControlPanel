@@ -11,6 +11,13 @@ def _set_verbose(value: bool, label: str) -> None:
     print(f"  ✓ {label}")
 
 
+def run(args, now=None):
+    if getattr(args, "subcommand", None) == "on":
+        run_on(args, now=now)
+    else:
+        run_off(args, now=now)
+
+
 def run_on(args, now=None):
     _set_verbose(True, "verbose logging enabled")
 
