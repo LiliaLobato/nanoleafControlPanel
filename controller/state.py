@@ -7,6 +7,7 @@ state.json load/save (atomic), cron-overlap file lock, and DND management.
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -99,7 +100,6 @@ def _strict_json_default(obj: object) -> None:
 
 def save_state(state: dict) -> None:
     """Atomically write state to disk via a temp file + os.replace()."""
-    import time as _time
     _ensure_state_dir()
     tmp = STATE_PATH.parent / (STATE_PATH.name + ".tmp")
     with open(tmp, "w") as f:
@@ -111,7 +111,7 @@ def save_state(state: dict) -> None:
         except PermissionError:
             if attempt == 2:
                 raise
-            _time.sleep(0.01)
+            time.sleep(0.01)
 
 
 # ---------------------------------------------------------------------------
