@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 def _is_anchor_time(now: datetime, config: Config) -> bool:
-    """Return True if the current cron tick falls within any 5-minute anchor window."""
+    """Return True if the current cron tick falls within any anchor window.
+
+    The window width equals config.cron_interval_minutes so that exactly one
+    tick fires per anchor regardless of the cron frequency.  With */2 cron the
+    window is [anchor, anchor+2); with */5 it is [anchor, anchor+5), etc.
+    """
     anchors = [
         config.weather_fetch_night,
         config.weather_fetch_morning,
@@ -27,8 +32,10 @@ def _is_anchor_time(now: datetime, config: Config) -> bool:
         config.weather_fetch_late_evening,
     ]
     now_minute = now.hour * 60 + now.minute
+    interval = config.cron_interval_minutes
     return any(
-        anchor.hour * 60 + anchor.minute <= now_minute < min(anchor.hour * 60 + anchor.minute + 5, 1440)
+        anchor.hour * 60 + anchor.minute <= now_minute
+        < min(anchor.hour * 60 + anchor.minute + interval, 1440)
         for anchor in anchors
     )
 
@@ -99,10 +106,11 @@ def get_weather(state: dict, now: datetime, config: Config) -> Optional[OpenWeat
             backoff_min = schedule[min(n - 1, len(schedule) - 1)]
             retry_at = now + timedelta(minutes=backoff_min)
             failure["next_retry_at"] = retry_at.isoformat()
+            schedule_len = len(schedule)
+            failure_tag = f"{n}/{schedule_len}" if n <= schedule_len else f"{n} (max backoff)"
             logger.warning(
-                "Weather API failure %d/%d, backing off until %s (%s)",
-                n, len(schedule),
-                retry_at.strftime("%H:%M"), exc,
+                "Weather API failure %s, backing off until %s (%s)",
+                failure_tag, retry_at.strftime("%H:%M"), exc,
             )
 
     cache = state.get("weather_cache")
@@ -111,6 +119,27 @@ def get_weather(state: dict, now: datetime, config: Config) -> Optional[OpenWeat
 
     logger.error("No weather cache available and API unreachable — running without weather data")
     return None
+
+
+# ---------------------------------------------------------------------------
+# Cache reconstruction helper (used by CLI status command)
+# ---------------------------------------------------------------------------
+
+def reconstruct_cached_weather(
+    state: dict,
+    lat: Optional[str],
+    lon: Optional[str],
+) -> Optional[OpenWeatherLight]:
+    """Reconstruct an OpenWeatherLight from the state cache, or None if unavailable."""
+    if not lat or not lon:
+        return None
+    cache = state.get("weather_cache")
+    if not cache or not cache.get("raw_data"):
+        return None
+    try:
+        return OpenWeatherLight.from_cache(cache["raw_data"], lat, lon)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------

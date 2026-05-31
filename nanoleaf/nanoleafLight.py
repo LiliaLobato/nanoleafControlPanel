@@ -7,10 +7,11 @@ Refer to the full nanoleafapi wrapper for discovery, setup, and advanced functio
 https://github.com/MylesMor/nanoleafapi
 """
 
-import colorsys
 import json
 import logging
 from typing import Any, Optional
+
+from nanoleaf.color_helper import rgb_to_hsb
 
 import requests
 from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException, Timeout
@@ -202,8 +203,7 @@ class NanoleafLight:
         :param on: if provided, include power state in the same call (True=on, False=off)
         :returns: True if successful, otherwise False
         """
-        if not 0 <= hue <= 359:
-            raise ValueError("Hue should be between 0 and 359")
+        hue = max(0, min(hue, 359))  # clamp: colorsys round(h*360) can produce 360
         if not 0 <= saturation <= 100:
             raise ValueError("Saturation should be between 0 and 100")
         if not 0 <= brightness <= 100:
@@ -252,6 +252,19 @@ class NanoleafLight:
         except NanoleafError:
             return False
 
+    def restore_state(self, snapshot: dict) -> bool:
+        """Restore lamp to a previously captured get_full_state() snapshot."""
+        if not snapshot:
+            return True
+        on = snapshot.get("on", True)
+        if snapshot.get("colorMode") == "ct":
+            return self.set_color_temp_and_brightness(
+                snapshot["ct"], snapshot["brightness"], on=on
+            )
+        return self.set_hsb(
+            snapshot["hue"], snapshot["sat"], snapshot["brightness"], on=on
+        )
+
     def set_color(
         self,
         rgb: tuple[int, int, int],
@@ -259,8 +272,8 @@ class NanoleafLight:
     ) -> bool:
         """Set the light colour from an RGB tuple via a batched /state call.
 
-        Converts RGB (0–255 per channel) to HSB using colorsys, then sends
-        a single batched PUT. Used by callers that work in RGB color space.
+        Converts RGB (0–255 per channel) to HSB via color_helper.rgb_to_hsb,
+        then sends a single batched PUT. Used by callers that work in RGB color space.
 
         :param rgb: (r, g, b) tuple, each channel 0–255
         :param on: if provided, include power state in the same call (True=on, False=off)
@@ -269,5 +282,4 @@ class NanoleafLight:
         r, g, b = rgb
         if not all(0 <= c <= 255 for c in (r, g, b)):
             raise ValueError("RGB channels must each be between 0 and 255")
-        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-        return self.set_hsb(round(h * 360), round(s * 100), round(v * 100), on=on)
+        return self.set_hsb(*rgb_to_hsb(r, g, b), on=on)

@@ -4,6 +4,7 @@ describe_color() helper: translates a LightProfile into a human-readable
 description used by CLI messages and verbose controller logs.
 """
 
+import colorsys
 import logging
 
 from controller.config import CONFIG_PATH, LightProfile, read_json_cached
@@ -21,9 +22,8 @@ _HUE_DEFAULTS = [
     (161, 200, "cyan"),
     (201, 245, "blue"),
     (246, 280, "purple"),
-    (281, 320, "magenta"),
-    (321, 345, "pink"),
-    (346, 360, "red"),  # red wraps: 346-360 mirrors 0-10 on the colour wheel
+    (281, 315, "magenta"),
+    (316, 359, "red"),  # high-hue reds (crimson/deep red)
 ]
 
 _SAT_DEFAULTS = [
@@ -96,6 +96,46 @@ def _lookup(value: int, defaults: list, overrides: dict) -> str:
         return "unknown"
     candidates.sort(key=lambda x: x[0])
     return candidates[0][1]
+
+
+def lookup_hue_range(hue: int) -> tuple[int, int, str]:
+    """Return (lo, hi, name) of the narrowest effective range containing hue.
+
+    Checks config overrides first (narrower wins), falls back to _HUE_DEFAULTS.
+    Returns (0, 359, "unknown") when no range covers the hue.
+    """
+    overrides = _load_overrides()
+    candidates: list[tuple[int, int, int, str]] = []
+
+    for start, end, name in _HUE_DEFAULTS:
+        if start <= hue <= end:
+            candidates.append((end - start, start, end, name))
+
+    for range_str, name in overrides.get("color_names", {}).items():
+        try:
+            lo, hi = (int(x) for x in range_str.split("-"))
+            if lo <= hue <= hi:
+                candidates.append((hi - lo, lo, hi, name))
+        except (ValueError, AttributeError):
+            pass
+
+    if not candidates:
+        return (0, 359, "unknown")
+    candidates.sort(key=lambda x: x[0])
+    _, lo, hi, name = candidates[0]
+    return lo, hi, name
+
+
+def rgb_to_hue(r: int, g: int, b: int) -> int:
+    """Convert RGB (0–255 each) to a Nanoleaf hue value (0–359)."""
+    h, _, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return min(round(h * 360), 359)
+
+
+def rgb_to_hsb(r: int, g: int, b: int) -> tuple[int, int, int]:
+    """Convert RGB (0–255 each) to Nanoleaf HSB (hue 0–359, sat 0–100, bri 0–100)."""
+    h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return min(round(h * 360), 359), round(s * 100), round(v * 100)
 
 
 def describe_color(profile: LightProfile) -> str:

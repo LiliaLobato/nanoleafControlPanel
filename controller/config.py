@@ -6,6 +6,7 @@ built-in profile constants, and the two-layer config loader.
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field, fields
 from datetime import time
 from pathlib import Path
@@ -91,6 +92,11 @@ class Config:
     # --- Failure backoff ---
     backoff_schedule_minutes: list[int] = field(default_factory=lambda: [5, 10, 20, 40, 60])
 
+    # --- Cron tick interval ---
+    # Must match the */N in the crontab entry. Controls the anchor-time window
+    # width in weather_cache._is_anchor_time so exactly one tick fires per anchor.
+    cron_interval_minutes: int = 2
+
     # --- Verbose logging ---
     verbose: bool = False
 
@@ -112,25 +118,37 @@ class LightProfile:
 SUNRISE_START_PROFILE = LightProfile(mode="hsb", hue=20, saturation=70, brightness=5)
 
 # Sunrise end / morning ramp stage 1 target: warm bright (end of stage 1)
-SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=90)
+SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=50)
 
 # Morning: cool blue-white, energizing (stage 2 target — final morning state)
-MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=100)
+MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=55)
 
-# Daytime-on (used when outside is dark): amber, soft
-DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=30, saturation=50, brightness=60)
+# Daytime-on (used when outside is dark): warm orange-red, soft
+DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=15, saturation=80, brightness=33)
 
-# Night: deep warm red-orange, cozy, dim
-NIGHT_PROFILE = LightProfile(mode="hsb", hue=15, saturation=80, brightness=20)
+# Night: deep red, cozy, dim
+NIGHT_PROFILE = LightProfile(mode="hsb", hue=8, saturation=90, brightness=20)
 
-# Late-night manual override: warm, low, visible
-LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=15, saturation=75, brightness=35)
+# Late-night manual override: pure red, low, visible
+LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=4, saturation=90, brightness=25)
 
 # Default party profile: vivid purple, full brightness
-PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=100)
+PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=55)
 
 # Off target (brightness=0 signals power-off intent to interpolate_profiles)
 OFF_PROFILE = LightProfile(mode="hsb", brightness=0)
+
+# Canonical name → default constant mapping used by load_profiles() and the CLI.
+PROFILE_DEFAULTS: dict[str, LightProfile] = {
+    "SUNRISE_START": SUNRISE_START_PROFILE,
+    "SUNRISE_END":   SUNRISE_END_PROFILE,
+    "MORNING":       MORNING_PROFILE,
+    "DAYTIME_ON":    DAYTIME_ON_PROFILE,
+    "NIGHT":         NIGHT_PROFILE,
+    "LATE_NIGHT":    LATE_NIGHT_PROFILE,
+    "PARTY":         PARTY_PROFILE,
+    "OFF":           OFF_PROFILE,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -204,3 +222,53 @@ def load_config() -> Config:
         )
 
     return config
+
+
+def save_config(data: dict) -> None:
+    """Atomically write data to CONFIG_PATH via temp file + os.replace().
+
+    Creates the config directory if it doesn't exist.
+    The caller is responsible for reading, merging, and validating before calling.
+    Clears the mtime cache so the very next load_config() / load_profiles() call
+    reads the file fresh instead of returning the now-stale cached data.
+    """
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_PATH.parent / (CONFIG_PATH.name + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, CONFIG_PATH)
+    _config_cache.clear()
+
+
+def load_profiles() -> dict[str, LightProfile]:
+    """Return effective profiles: default constants merged with config.json overrides.
+
+    Uses the same mtime-cached config.json read as load_config() — one file
+    stat per call, re-reads only when config.json changes.
+    Profiles absent from config.json return their default constant unchanged.
+    Invalid stored values fall back to the default constant.
+    """
+    overrides = read_json_cached(CONFIG_PATH, _config_cache, logger)
+    profile_overrides = overrides.get("profiles", {})
+    if not profile_overrides:
+        return dict(PROFILE_DEFAULTS)
+
+    result: dict[str, LightProfile] = {}
+    for name, default in PROFILE_DEFAULTS.items():
+        stored = profile_overrides.get(name)
+        if not stored:
+            result[name] = default
+            continue
+        merged = {
+            "mode":       stored.get("mode",       default.mode),
+            "hue":        stored.get("hue",        default.hue),
+            "saturation": stored.get("saturation", default.saturation),
+            "brightness": stored.get("brightness", default.brightness),
+            "color_temp": stored.get("color_temp", default.color_temp),
+        }
+        try:
+            result[name] = LightProfile(**merged)
+        except (TypeError, ValueError) as exc:
+            logger.warning("load_profiles: invalid override for %r (%s) — using default", name, exc)
+            result[name] = default
+    return result

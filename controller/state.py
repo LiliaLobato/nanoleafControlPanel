@@ -18,9 +18,10 @@ from controller.dateTime import combine, parse_iso
 
 logger = logging.getLogger(__name__)
 
-STATE_DIR  = Path.home() / ".local" / "share" / "nanoleafControlPanel"
-STATE_PATH = STATE_DIR / "state.json"
-LOCK_PATH  = STATE_DIR / "controller.lock"
+STATE_DIR        = Path.home() / ".local" / "share" / "nanoleafControlPanel"
+STATE_PATH       = STATE_DIR / "state.json"
+LOCK_PATH        = STATE_DIR / "controller.lock"
+PREVIEW_LOCK_PATH = STATE_DIR / "preview.lock"
 
 
 def _ensure_state_dir() -> None:
@@ -124,6 +125,16 @@ def get_run_lock() -> filelock.FileLock:
 acquire_run_lock = get_run_lock
 
 
+def get_preview_lock() -> filelock.FileLock:
+    """Return the preview lock (not yet acquired).
+
+    Acquired by CLI preview commands; the controller checks it before applying
+    lamp changes and skips the tick if a preview session is active.
+    """
+    _ensure_state_dir()
+    return filelock.FileLock(str(PREVIEW_LOCK_PATH), timeout=0)
+
+
 # ---------------------------------------------------------------------------
 # DND management
 # ---------------------------------------------------------------------------
@@ -214,6 +225,7 @@ def handle_lamp_success(state: dict) -> None:
     failure["last_failure_at"] = None
     failure["last_failure_type"] = None
     failure["next_retry_at"] = None
+    state["last_error"] = None
 
 
 def handle_lamp_failure(state: dict, now: datetime, config: Config, exc: Exception) -> None:
@@ -232,10 +244,11 @@ def handle_lamp_failure(state: dict, now: datetime, config: Config, exc: Excepti
         "type": type(exc).__name__,
         "message": str(exc),
     }
+    schedule_len = len(schedule)
+    failure_tag = f"{n}/{schedule_len}" if n <= schedule_len else f"{n} (max backoff)"
     logger.warning(
-        "Lamp API failure %d/%d, backing off until %s (%s)",
-        n, len(config.backoff_schedule_minutes),
-        retry_at.strftime("%H:%M"), exc,
+        "Lamp API failure %s, backing off until %s (%s)",
+        failure_tag, retry_at.strftime("%H:%M"), exc,
     )
 
 

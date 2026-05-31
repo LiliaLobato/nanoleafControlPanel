@@ -1,10 +1,10 @@
 """sunrise_sunset_controller.py
 
-Cron-driven controller that runs every 5 minutes and applies the correct
-Nanoleaf light state based on sunrise/sunset, weather, and manual overrides.
+Cron-driven controller that applies the correct Nanoleaf light state based
+on sunrise/sunset, weather, and manual overrides.
 
-Usage (crontab):
-    */5 * * * * /usr/bin/python3 /home/pi/nanoleafControlPanel/sunrise_sunset_controller.py
+Usage (crontab) — interval must match config.cron_interval_minutes (default 2):
+    */2 * * * * /usr/bin/python3 /home/pi/nanoleafControlPanel/sunrise_sunset_controller.py
 """
 
 import dataclasses
@@ -31,6 +31,7 @@ from controller.profiles import (
 )
 from controller.state import (
     get_run_lock,
+    get_preview_lock,
     apply_dnd_flag,
     clear_dnd_if_expired,
     detect_manual_override,
@@ -170,10 +171,11 @@ def run(now: Optional[datetime] = None) -> None:
         else:
             apply_dnd_flag(state, phase, now, config)
             should_be_on = False
-            logger.info(
-                "Manual OFF detected (phase=%s) — DND until %s",
-                phase, state.get("do_not_disturb_until"),
-            )
+            dnd_until = state.get("do_not_disturb_until")
+            if dnd_until:
+                logger.info("Manual OFF detected (phase=%s) — DND until %s", phase, dnd_until)
+            else:
+                logger.info("Manual OFF detected (phase=%s) — no DND for this phase", phase)
     elif override == "late_night_trigger":
         state["late_night_override"] = {
             "started_at": now.isoformat(),
@@ -191,6 +193,15 @@ def run(now: Optional[datetime] = None) -> None:
         state["do_not_disturb_until"] = None
         state["dnd_scope"] = None
         logger.info("Manual ON detected (phase=%s) — DND cleared", phase)
+
+    # --- Preview guard ---------------------------------------------------
+    try:
+        with get_preview_lock():
+            pass  # not held; release immediately
+    except filelock.Timeout:
+        logger.info("Preview session active — skipping lamp changes this tick (phase=%s)", phase)
+        save_state(state)
+        return
 
     # --- Apply -----------------------------------------------------------
     logger.debug(
