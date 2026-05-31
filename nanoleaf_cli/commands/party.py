@@ -1,5 +1,6 @@
 """party command — start with options, stop, disable."""
 
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 
 from controller.config import LightProfile, load_config, load_profiles
@@ -34,6 +35,7 @@ def _resolve_ends_at(args, config, now: datetime) -> datetime:
             time_str = validate_time_str(args.until)
         except Exception as exc:
             print_error(str(exc))
+            return now  # unreachable; return sentinel to satisfy type checker
         h, m = map(int, time_str.split(":"))
         ends_at = now.replace(hour=h, minute=m, second=0, microsecond=0)
     else:
@@ -52,33 +54,29 @@ def _resolve_fade(args, config) -> int:
             fade_on = validate_bool(args.fade)
         except Exception as exc:
             print_error(str(exc))
+            return 0  # unreachable; sentinel to satisfy type checker
         return config.party_default_fade_minutes if fade_on else 0
     return config.party_default_fade_minutes
 
 
 def _resolve_party_profile(args, default_party: LightProfile) -> LightProfile:
-    hue = default_party.hue
-    sat = default_party.saturation
-    bri = default_party.brightness
-    mode = default_party.mode
-    ct = default_party.color_temp
-
     if getattr(args, "color", None):
         try:
             r, g, b = validate_rgb_str(args.color)
         except Exception as exc:
             print_error(str(exc))
+            return default_party  # unreachable; sentinel to satisfy type checker
         hue, sat, bri = rgb_to_hsb(r, g, b)
-        mode = "hsb"
-    else:
-        if getattr(args, "hue", None) is not None:
-            hue = int(args.hue)
-        if getattr(args, "sat", None) is not None:
-            sat = int(args.sat)
-        if getattr(args, "brightness", None) is not None:
-            bri = int(args.brightness)
+        return replace(default_party, hue=hue, saturation=sat, brightness=bri, mode="hsb")
 
-    return LightProfile(mode=mode, hue=hue, saturation=sat, brightness=bri, color_temp=ct)
+    overrides = {}
+    if getattr(args, "hue", None) is not None:
+        overrides["hue"] = int(args.hue)
+    if getattr(args, "sat", None) is not None:
+        overrides["saturation"] = int(args.sat)
+    if getattr(args, "brightness", None) is not None:
+        overrides["brightness"] = int(args.brightness)
+    return replace(default_party, **overrides)
 
 
 def _start(args, now=None):
@@ -96,13 +94,7 @@ def _start(args, now=None):
         "active": True,
         "ends_at": ends_at.isoformat(),
         "fade_minutes": fade_minutes,
-        "profile": {
-            "mode": party_profile.mode,
-            "hue": party_profile.hue,
-            "saturation": party_profile.saturation,
-            "brightness": party_profile.brightness,
-            "color_temp": party_profile.color_temp,
-        },
+        "profile": asdict(party_profile),
     }
     save_state(state)
     confirm_party(party_profile, ends_at, fade_minutes if fade_minutes > 0 else None)

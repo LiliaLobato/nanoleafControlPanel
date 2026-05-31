@@ -49,10 +49,6 @@ def validate_color_temp(v: str) -> int:
     return _int_range(1200, 6500, "color_temp")(v)
 
 
-def validate_rgb_channel(v: str) -> int:
-    return _int_range(0, 255, "RGB channel")(v)
-
-
 def validate_positive_int(v: str) -> int:
     try:
         n = int(v)

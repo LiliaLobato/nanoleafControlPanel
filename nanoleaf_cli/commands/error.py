@@ -24,7 +24,7 @@ def run(args, now=None):
         return
 
     error_lines = []
-    with open(LOG_PATH) as f:
+    with open(LOG_PATH, encoding="utf-8") as f:
         for line in f:
             if " ERROR " in line:
                 error_lines.append(line.rstrip())

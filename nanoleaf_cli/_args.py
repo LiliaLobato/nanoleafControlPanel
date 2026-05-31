@@ -28,7 +28,11 @@ from nanoleaf_cli.commands.lamp import (
     run_info as lamp_info,
     run_ping as lamp_ping,
 )
-from nanoleaf_cli._validation import validate_hue as _validate_hue
+from nanoleaf_cli._validation import (
+    validate_hue as _validate_hue,
+    validate_saturation as _validate_saturation,
+    validate_brightness as _validate_brightness,
+)
 from nanoleaf_cli.commands.status import run as status_run
 from nanoleaf_cli.commands.error import run as error_run
 from nanoleaf_cli.commands.debug import run_on as debug_on, run_off as debug_off
@@ -150,9 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_prev_profile.set_defaults(func=preview_profile)
 
     p_prev_hsb = prev_sub.add_parser("hsb", help="preview an HSB triple")
-    p_prev_hsb.add_argument("hue", type=int, help="hue 0-360")
-    p_prev_hsb.add_argument("saturation", type=int, help="saturation 0-100")
-    p_prev_hsb.add_argument("brightness", type=int, help="brightness 0-100")
+    p_prev_hsb.add_argument("hue", type=_validate_hue, help="hue 0-359")
+    p_prev_hsb.add_argument("saturation", type=_validate_saturation, help="saturation 0-100")
+    p_prev_hsb.add_argument("brightness", type=_validate_brightness, help="brightness 0-100")
     p_prev_hsb.set_defaults(func=preview_hsb)
 
     p_prev_color = prev_sub.add_parser("color", help="preview an RGB color")
@@ -170,9 +174,9 @@ def build_parser() -> argparse.ArgumentParser:
         "action", nargs="?", choices=["stop", "disable"],
         help="stop/disable ends party mode; omit to start",
     )
-    p_party.add_argument("--hue", type=int, metavar="H", help="hue 0-360")
-    p_party.add_argument("--sat", type=int, metavar="S", help="saturation 0-100")
-    p_party.add_argument("--brightness", type=int, metavar="B", help="brightness 0-100")
+    p_party.add_argument("--hue", type=_validate_hue, metavar="H", help="hue 0-359")
+    p_party.add_argument("--sat", type=_validate_saturation, metavar="S", help="saturation 0-100")
+    p_party.add_argument("--brightness", type=_validate_brightness, metavar="B", help="brightness 0-100")
     p_party.add_argument("--color", metavar="R,G,B", help="RGB color 0-255 per channel")
     p_party.add_argument("--until", metavar="HH:MM", help="end time in 24hr format")
     p_party.add_argument(

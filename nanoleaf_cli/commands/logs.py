@@ -2,6 +2,7 @@
 
 import sys
 import time
+from collections import deque
 
 from controller.log_setup import LOG_PATH
 
@@ -14,14 +15,13 @@ def run(args, now=None):
         sys.exit(1)
 
     if n is not None:
-        with open(LOG_PATH) as f:
-            lines = f.readlines()
-        for line in lines[-n:]:
-            print(line, end="")
+        with open(LOG_PATH, encoding="utf-8") as f:
+            for line in deque(f, maxlen=n):
+                print(line, end="")
         return
 
     # Follow mode: seek to end then poll for new lines
-    with open(LOG_PATH) as f:
+    with open(LOG_PATH, encoding="utf-8") as f:
         f.seek(0, 2)
         try:
             while True:

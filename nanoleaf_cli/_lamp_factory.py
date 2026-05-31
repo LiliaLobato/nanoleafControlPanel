@@ -11,6 +11,8 @@ def make_light() -> NanoleafLight:
     token = os.getenv("NANOLEAF_AUTH_TOKEN")
     if not ip:
         print_error("NANOLEAF_IP_ADDRESS is not set")
+        return  # unreachable in production; guards test-safety
     if not token:
         print_error("NANOLEAF_AUTH_TOKEN is not set")
+        return
     return NanoleafLight("nanoleaf", ip, token)

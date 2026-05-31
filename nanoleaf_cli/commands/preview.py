@@ -39,6 +39,7 @@ def run_profile(args, now=None):
         name = validate_profile_name(args.name)
     except Exception as exc:
         print_error(str(exc))
+        return
     profile = load_profiles()[name]
     light = make_light()
 
@@ -64,5 +65,6 @@ def run_color(args, now=None):
         rgb = validate_rgb_str(args.rgb)
     except Exception as exc:
         print_error(str(exc))
+        return
     light = make_light()
     _do_preview(light, lambda l: l.set_color(rgb, on=True))

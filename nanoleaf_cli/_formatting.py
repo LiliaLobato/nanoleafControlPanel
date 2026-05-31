@@ -68,9 +68,6 @@ def confirm_party(
     profile: LightProfile,
     ends_at: Optional[datetime],
     fade_minutes: Optional[int],
-    *,
-    now: Optional[datetime] = None,
-    verbose: bool = False,
 ) -> None:
     """Print a confirmation line when party mode is activated."""
     desc = describe_color(profile)

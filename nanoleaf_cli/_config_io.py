@@ -1,7 +1,8 @@
 """Shared config file I/O for CLI commands.
 
-Single authoritative _load_raw implementation used by all commands that
-need to read the raw config.json overlay before calling save_config().
+load_raw_config() is the single authoritative reader for the raw
+config.json overlay. All CLI commands that need to read before writing
+use this instead of re-implementing their own file read.
 """
 
 import json

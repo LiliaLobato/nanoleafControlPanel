@@ -99,10 +99,11 @@ def get_weather(state: dict, now: datetime, config: Config) -> Optional[OpenWeat
             backoff_min = schedule[min(n - 1, len(schedule) - 1)]
             retry_at = now + timedelta(minutes=backoff_min)
             failure["next_retry_at"] = retry_at.isoformat()
+            schedule_len = len(schedule)
+            failure_tag = f"{n}/{schedule_len}" if n <= schedule_len else f"{n} (max backoff)"
             logger.warning(
-                "Weather API failure %d/%d, backing off until %s (%s)",
-                n, len(schedule),
-                retry_at.strftime("%H:%M"), exc,
+                "Weather API failure %s, backing off until %s (%s)",
+                failure_tag, retry_at.strftime("%H:%M"), exc,
             )
 
     cache = state.get("weather_cache")

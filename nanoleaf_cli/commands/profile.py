@@ -24,6 +24,7 @@ def run_get(args, now=None):
         name = validate_profile_name(args.name)
     except Exception as exc:
         print_error(str(exc))
+        return
     profiles = load_profiles()
     profile = profiles[name]
     desc = describe_color(profile)
@@ -36,11 +37,13 @@ def run_set(args, now=None):
         name = validate_profile_name(args.name)
     except Exception as exc:
         print_error(str(exc))
+        return
     field_name = args.field
     try:
         validated = validate_profile_field(field_name, args.value)
     except Exception as exc:
         print_error(str(exc))
+        return
 
     prev_profile = load_profiles().get(name) if verbose else None
 
@@ -59,6 +62,7 @@ def run_reset(args, now=None):
         name = validate_profile_name(args.name)
     except Exception as exc:
         print_error(str(exc))
+        return
 
     raw = load_raw_config()
     profiles_section = raw.get("profiles", {})

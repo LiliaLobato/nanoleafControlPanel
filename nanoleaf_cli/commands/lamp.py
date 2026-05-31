@@ -2,9 +2,11 @@
 
 import json
 
+from controller.config import LightProfile
+from controller.state import load_state, save_state, handle_lamp_success
+from nanoleaf.color_helper import describe_color
 from nanoleaf_cli._lamp_factory import make_light
 from nanoleaf_cli._formatting import print_error
-from controller.state import load_state, save_state, handle_lamp_success
 
 
 def run_on(args, now=None):
@@ -50,8 +52,6 @@ def run_ping(args, now=None):
         print("  ✓ lamp reachable — no active backoff")
     print("  → applying current controller state...")
     from sunrise_sunset_controller import main as controller_main
-    from controller.config import LightProfile
-    from nanoleaf.color_helper import describe_color
     controller_main(now=now)
     applied = (load_state().get("last_applied") or {})
     if applied:
