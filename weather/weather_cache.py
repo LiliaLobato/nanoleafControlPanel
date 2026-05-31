@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 def _is_anchor_time(now: datetime, config: Config) -> bool:
-    """Return True if the current cron tick falls within any 5-minute anchor window."""
+    """Return True if the current cron tick falls within any anchor window.
+
+    The window width equals config.cron_interval_minutes so that exactly one
+    tick fires per anchor regardless of the cron frequency.  With */2 cron the
+    window is [anchor, anchor+2); with */5 it is [anchor, anchor+5), etc.
+    """
     anchors = [
         config.weather_fetch_night,
         config.weather_fetch_morning,
@@ -27,8 +32,10 @@ def _is_anchor_time(now: datetime, config: Config) -> bool:
         config.weather_fetch_late_evening,
     ]
     now_minute = now.hour * 60 + now.minute
+    interval = config.cron_interval_minutes
     return any(
-        anchor.hour * 60 + anchor.minute <= now_minute < min(anchor.hour * 60 + anchor.minute + 5, 1440)
+        anchor.hour * 60 + anchor.minute <= now_minute
+        < min(anchor.hour * 60 + anchor.minute + interval, 1440)
         for anchor in anchors
     )
 

@@ -92,6 +92,11 @@ class Config:
     # --- Failure backoff ---
     backoff_schedule_minutes: list[int] = field(default_factory=lambda: [5, 10, 20, 40, 60])
 
+    # --- Cron tick interval ---
+    # Must match the */N in the crontab entry. Controls the anchor-time window
+    # width in weather_cache._is_anchor_time so exactly one tick fires per anchor.
+    cron_interval_minutes: int = 2
+
     # --- Verbose logging ---
     verbose: bool = False
 

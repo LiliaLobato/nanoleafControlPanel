@@ -1,10 +1,10 @@
 """sunrise_sunset_controller.py
 
-Cron-driven controller that runs every 5 minutes and applies the correct
-Nanoleaf light state based on sunrise/sunset, weather, and manual overrides.
+Cron-driven controller that applies the correct Nanoleaf light state based
+on sunrise/sunset, weather, and manual overrides.
 
-Usage (crontab):
-    */5 * * * * /usr/bin/python3 /home/pi/nanoleafControlPanel/sunrise_sunset_controller.py
+Usage (crontab) — interval must match config.cron_interval_minutes (default 2):
+    */2 * * * * /usr/bin/python3 /home/pi/nanoleafControlPanel/sunrise_sunset_controller.py
 """
 
 import dataclasses

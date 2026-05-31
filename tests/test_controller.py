@@ -513,6 +513,100 @@ class TestLastAppliedSchema:
 
 
 # ---------------------------------------------------------------------------
+# Anchor-time window — cron-interval agnostic
+# ---------------------------------------------------------------------------
+
+class TestIsAnchorTime:
+    """_is_anchor_time fires exactly once per anchor window for any cron interval."""
+
+    from weather.weather_cache import _is_anchor_time as _fn
+
+    def _now(self, anchor_hour: int, anchor_min: int, offset_min: int) -> datetime:
+        total = anchor_hour * 60 + anchor_min + offset_min
+        return datetime(2024, 6, 15, total // 60, total % 60, tzinfo=UTC)
+
+    # weather_fetch_evening defaults to 14:00; use it as the test anchor so we
+    # don't need custom config for the basic window tests.
+
+    @pytest.mark.parametrize("interval,offset,expected,label", [
+        # interval=1: window [anchor, anchor+1) — only the exact minute fires
+        (1,  0, True,  "interval=1: at anchor"),
+        (1,  1, False, "interval=1: 1 min after anchor is outside"),
+        # interval=2 (deployed default): window [anchor, anchor+2)
+        (2,  0, True,  "interval=2: at anchor"),
+        (2,  1, True,  "interval=2: 1 min after is inside window"),
+        (2,  2, False, "interval=2: 2 min after is outside"),
+        (2,  3, False, "interval=2: 3 min after is outside"),
+        # interval=5 (original intent): window [anchor, anchor+5)
+        (5,  0, True,  "interval=5: at anchor"),
+        (5,  4, True,  "interval=5: 4 min after is last minute inside"),
+        (5,  5, False, "interval=5: 5 min after is outside"),
+        # interval=10
+        (10, 0, True,  "interval=10: at anchor"),
+        (10, 9, True,  "interval=10: 9 min after is inside"),
+        (10, 10, False, "interval=10: 10 min after is outside"),
+        # 1 min before the anchor never fires regardless of interval
+        (1,  -1, False, "1 min before anchor (interval=1)"),
+        (2,  -1, False, "1 min before anchor (interval=2)"),
+        (5,  -1, False, "1 min before anchor (interval=5)"),
+    ])
+    def test_anchor_window(self, interval, offset, expected, label):
+        from weather.weather_cache import _is_anchor_time
+        now = self._now(14, 0, offset)
+        c = cfg(cron_interval_minutes=interval)
+        assert _is_anchor_time(now, c) is expected, label
+
+    def test_non_anchor_time_never_fires(self):
+        """A minute not near any anchor does not trigger for any reasonable interval."""
+        from weather.weather_cache import _is_anchor_time
+        # 12:30 is >30 min from nearest anchor (9:00 or 14:00)
+        now = datetime(2024, 6, 15, 12, 30, tzinfo=UTC)
+        for interval in (1, 2, 5, 10):
+            c = cfg(cron_interval_minutes=interval)
+            assert _is_anchor_time(now, c) is False, \
+                f"12:30 should not fire for interval={interval}"
+
+    def test_non_aligned_anchor_with_interval_2(self):
+        """Anchor at HH:01 with interval=2: window [anchor, anchor+2) catches HH:01 and HH:02."""
+        from weather.weather_cache import _is_anchor_time
+        c = cfg(cron_interval_minutes=2, weather_fetch_evening=time(14, 1))
+        # at 14:01 — inside window
+        assert _is_anchor_time(datetime(2024, 6, 15, 14, 1, tzinfo=UTC), c) is True
+        # at 14:02 — still inside [841, 843)
+        assert _is_anchor_time(datetime(2024, 6, 15, 14, 2, tzinfo=UTC), c) is True
+        # at 14:03 — outside
+        assert _is_anchor_time(datetime(2024, 6, 15, 14, 3, tzinfo=UTC), c) is False
+        # at 14:00 — before anchor, outside
+        assert _is_anchor_time(datetime(2024, 6, 15, 14, 0, tzinfo=UTC), c) is False
+
+    def test_multiple_anchors_any_fires(self):
+        """A tick near any of the 5 anchors returns True."""
+        from weather.weather_cache import _is_anchor_time
+        c = cfg(cron_interval_minutes=2)
+        # Default anchors: 0:00, 3:00, 9:00, 14:00, 20:00
+        for hour in (0, 3, 9, 14, 20):
+            now = datetime(2024, 6, 15, hour, 0, tzinfo=UTC)
+            assert _is_anchor_time(now, c) is True, \
+                f"tick at {hour:02d}:00 should fire (anchor at that hour)"
+
+    def test_midnight_anchor_wraparound(self):
+        """Anchor at 23:59 with interval=2 fires at 23:59 but not at 00:00."""
+        from weather.weather_cache import _is_anchor_time
+        c = cfg(
+            cron_interval_minutes=2,
+            weather_fetch_night=time(23, 59),
+            weather_fetch_morning=time(1, 0),
+            weather_fetch_midday=time(9, 0),
+            weather_fetch_evening=time(14, 0),
+            weather_fetch_late_evening=time(20, 0),
+        )
+        at_anchor = datetime(2024, 6, 15, 23, 59, tzinfo=UTC)
+        at_midnight = datetime(2024, 6, 16, 0, 0, tzinfo=UTC)
+        assert _is_anchor_time(at_anchor, c) is True
+        assert _is_anchor_time(at_midnight, c) is False
+
+
+# ---------------------------------------------------------------------------
 # Weather backoff
 # ---------------------------------------------------------------------------
 

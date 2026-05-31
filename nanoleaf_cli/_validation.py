@@ -184,6 +184,8 @@ _CONFIG_FIELD_VALIDATORS: dict[str, Callable[[str], Any]] = {
     "party_default_fade_minutes": validate_positive_int,
     # Backoff
     "backoff_schedule_minutes":   validate_backoff_schedule,
+    # Cron interval
+    "cron_interval_minutes":      validate_positive_int,
     # Verbose
     "verbose":                    validate_bool,
 }
