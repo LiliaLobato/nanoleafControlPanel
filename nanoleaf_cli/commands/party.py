@@ -1,12 +1,12 @@
 """party command — start with options, stop, disable."""
 
-import colorsys
 from datetime import datetime, timedelta
 
-from controller.config import load_config
+from controller.config import LightProfile, load_config, load_profiles
 from controller.state import load_state, save_state
+from nanoleaf.color_helper import rgb_to_hsb
 from nanoleaf_cli._formatting import confirm_party, print_error
-from nanoleaf_cli._validation import validate_bool, validate_time_str
+from nanoleaf_cli._validation import validate_bool, validate_rgb_str, validate_time_str
 
 
 def run(args, now=None):
@@ -28,13 +28,7 @@ def _stop(args, now=None):
     print("  ✓ party mode stopped")
 
 
-def _start(args, now=None):
-    config = load_config()
-
-    if now is None:
-        now = datetime.now().astimezone()
-
-    # ---- Resolve ends_at ----
+def _resolve_ends_at(args, config, now: datetime) -> datetime:
     if getattr(args, "until", None):
         try:
             time_str = validate_time_str(args.until)
@@ -42,32 +36,27 @@ def _start(args, now=None):
             print_error(str(exc))
         h, m = map(int, time_str.split(":"))
         ends_at = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        if ends_at <= now:
-            ends_at += timedelta(days=1)
     else:
         t = config.party_default_end
         ends_at = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
-        if ends_at <= now:
-            ends_at += timedelta(days=1)
+    if ends_at <= now:
+        ends_at += timedelta(days=1)
+    return ends_at
 
-    # ---- Resolve fade ----
-    fade_minutes: int
+
+def _resolve_fade(args, config) -> int:
     if getattr(args, "fade_duration", None) is not None:
-        fade_minutes = int(args.fade_duration)
-    elif getattr(args, "fade", None) is not None:
+        return int(args.fade_duration)
+    if getattr(args, "fade", None) is not None:
         try:
             fade_on = validate_bool(args.fade)
         except Exception as exc:
             print_error(str(exc))
-        fade_minutes = config.party_default_fade_minutes if fade_on else 0
-    else:
-        fade_minutes = config.party_default_fade_minutes
+        return config.party_default_fade_minutes if fade_on else 0
+    return config.party_default_fade_minutes
 
-    # ---- Resolve color profile ----
-    from controller.config import LightProfile, load_profiles
-    profiles = load_profiles()
-    default_party = profiles["PARTY"]
 
+def _resolve_party_profile(args, default_party: LightProfile) -> LightProfile:
     hue = default_party.hue
     sat = default_party.saturation
     bri = default_party.brightness
@@ -75,19 +64,11 @@ def _start(args, now=None):
     ct = default_party.color_temp
 
     if getattr(args, "color", None):
-        parts = args.color.split(",")
-        if len(parts) != 3:
-            print_error("--color must be R,G,B (three comma-separated integers 0-255)")
         try:
-            r, g, b = [int(x.strip()) for x in parts]
-        except ValueError:
-            print_error("--color values must be integers")
-        if not all(0 <= c <= 255 for c in (r, g, b)):
-            print_error("--color channel values must be 0-255")
-        h_norm, s_norm, v_norm = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-        hue = round(h_norm * 360)
-        sat = round(s_norm * 100)
-        bri = round(v_norm * 100)
+            r, g, b = validate_rgb_str(args.color)
+        except Exception as exc:
+            print_error(str(exc))
+        hue, sat, bri = rgb_to_hsb(r, g, b)
         mode = "hsb"
     else:
         if getattr(args, "hue", None) is not None:
@@ -97,9 +78,19 @@ def _start(args, now=None):
         if getattr(args, "brightness", None) is not None:
             bri = int(args.brightness)
 
-    party_profile = LightProfile(mode=mode, hue=hue, saturation=sat, brightness=bri, color_temp=ct)
+    return LightProfile(mode=mode, hue=hue, saturation=sat, brightness=bri, color_temp=ct)
 
-    # ---- Write state ----
+
+def _start(args, now=None):
+    config = load_config()
+
+    if now is None:
+        now = datetime.now().astimezone()
+
+    ends_at = _resolve_ends_at(args, config, now)
+    fade_minutes = _resolve_fade(args, config)
+    party_profile = _resolve_party_profile(args, load_profiles()["PARTY"])
+
     state = load_state()
     state["party_mode"] = {
         "active": True,

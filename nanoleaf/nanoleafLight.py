@@ -202,8 +202,7 @@ class NanoleafLight:
         :param on: if provided, include power state in the same call (True=on, False=off)
         :returns: True if successful, otherwise False
         """
-        if not 0 <= hue <= 359:
-            raise ValueError("Hue should be between 0 and 359")
+        hue = max(0, min(hue, 359))  # clamp: colorsys round(h*360) can produce 360
         if not 0 <= saturation <= 100:
             raise ValueError("Saturation should be between 0 and 100")
         if not 0 <= brightness <= 100:
@@ -251,6 +250,19 @@ class NanoleafLight:
             return True
         except NanoleafError:
             return False
+
+    def restore_state(self, snapshot: dict) -> bool:
+        """Restore lamp to a previously captured get_full_state() snapshot."""
+        if not snapshot:
+            return True
+        on = snapshot.get("on", True)
+        if snapshot.get("colorMode") == "ct":
+            return self.set_color_temp_and_brightness(
+                snapshot["ct"], snapshot["brightness"], on=on
+            )
+        return self.set_hsb(
+            snapshot["hue"], snapshot["sat"], snapshot["brightness"], on=on
+        )
 
     def set_color(
         self,

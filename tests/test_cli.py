@@ -38,17 +38,18 @@ def dt(hour, minute=0) -> datetime:
 
 @pytest.fixture
 def tmp_config(tmp_path, monkeypatch):
-    """Redirect all CONFIG_PATH references to a temp file and clear the mtime cache."""
+    """Redirect CONFIG_PATH to a temp file and clear the mtime cache.
+
+    Patching controller.config.CONFIG_PATH is sufficient: _config_io reads
+    CONFIG_PATH through the module reference, and load_config/save_config/
+    load_profiles all go through controller.config.CONFIG_PATH directly.
+    """
     import controller.config as _cfg
-    import nanoleaf_cli.commands.config as _cmd_cfg
-    import nanoleaf_cli.commands.profile as _cmd_prof
-    import nanoleaf_cli.commands.debug as _cmd_dbg
+    import nanoleaf_cli._config_io as _config_io
 
     cfg_path = tmp_path / "config.json"
     monkeypatch.setattr(_cfg, "CONFIG_PATH", cfg_path)
-    monkeypatch.setattr(_cmd_cfg, "CONFIG_PATH", cfg_path)
-    monkeypatch.setattr(_cmd_prof, "CONFIG_PATH", cfg_path)
-    monkeypatch.setattr(_cmd_dbg, "CONFIG_PATH", cfg_path)
+    monkeypatch.setattr(_config_io, "_cfg_module", _cfg)
     _cfg._config_cache.clear()
     yield cfg_path
     _cfg._config_cache.clear()
@@ -75,7 +76,7 @@ class TestValidation:
         )
         cases = [
             (validate_hue,         "0",    0,    "hue 0 is valid"),
-            (validate_hue,         "360",  360,  "hue 360 is valid"),
+            (validate_hue,         "359",  359,  "hue 359 is valid"),
             (validate_saturation,  "0",    0,    "saturation 0 is valid"),
             (validate_saturation,  "100",  100,  "saturation 100 is valid"),
             (validate_brightness,  "50",   50,   "brightness 50 is valid"),
@@ -86,6 +87,7 @@ class TestValidation:
             assert fn(val) == expected, msg
 
         out_of_range = [
+            (validate_hue,        "360",  "hue 360 should be rejected"),
             (validate_hue,        "361",  "hue 361 should be rejected"),
             (validate_hue,        "-1",   "hue -1 should be rejected"),
             (validate_saturation, "101",  "saturation 101 should be rejected"),
@@ -178,12 +180,12 @@ class TestFormatting:
         from nanoleaf_cli._formatting import confirm_config_set, confirm_profile_set, confirm_party
         from controller.config import LightProfile
 
-        confirm_config_set("morning_latest_start", "08:00")
+        confirm_config_set("morning_latest_start", "08:00 (8:00 AM)")
         out = capsys.readouterr().out
         assert "morning_latest_start" in out and "08:00" in out, \
             f"confirm_config_set should show key and value, got {out!r}"
 
-        confirm_config_set("adverse_offset_min", 45, prev=30, verbose=True)
+        confirm_config_set("adverse_offset_min", "45", prev=30, verbose=True)
         out = capsys.readouterr().out
         assert "30" in out, f"verbose mode should show previous value 30, got {out!r}"
 

@@ -1,23 +1,13 @@
 """config commands — list, get, set, reset, color-name."""
 
-import colorsys
-import json
 from dataclasses import fields
 from datetime import time
 
-from controller.config import CONFIG_PATH, Config, load_config, save_config
-from nanoleaf_cli._formatting import confirm_config_set, fmt_time, print_error
-from nanoleaf_cli._validation import validate_config_field
-
-
-def _load_raw() -> dict:
-    if not CONFIG_PATH.exists():
-        return {}
-    try:
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
+from controller.config import Config, load_config, save_config
+from nanoleaf.color_helper import rgb_to_hue
+from nanoleaf_cli._config_io import load_raw_config
+from nanoleaf_cli._formatting import confirm_config_set, fmt_config_value, fmt_time, print_error
+from nanoleaf_cli._validation import validate_config_field, validate_rgb_str
 
 
 def run_list(args, now=None):
@@ -44,11 +34,11 @@ def run_set(args, now=None):
         validated = validate_config_field(key, args.value)
     except Exception as exc:
         print_error(str(exc))
-    raw = _load_raw()
+    raw = load_raw_config()
     prev = raw.get(key)
     raw[key] = validated
     save_config(raw)
-    confirm_config_set(key, validated, prev=prev, verbose=verbose)
+    confirm_config_set(key, fmt_config_value(key, validated), prev=prev, verbose=verbose)
 
 
 def run_reset(args, now=None):
@@ -60,7 +50,7 @@ def run_reset(args, now=None):
         return
     if not key:
         print_error("specify a key to reset, or use --all to wipe config")
-    raw = _load_raw()
+    raw = load_raw_config()
     if key not in raw:
         print(f"  {key} is already at its default (not overridden)")
         return
@@ -84,15 +74,10 @@ def run_color_name(args, now=None):
         except ValueError:
             print_error(f"invalid hex color {args.hex!r}")
     elif args.rgb:
-        parts = args.rgb.split(",")
-        if len(parts) != 3:
-            print_error("--rgb must be R,G,B (three comma-separated integers)")
         try:
-            r, g, b = [int(x.strip()) for x in parts]
-        except ValueError:
-            print_error("--rgb values must be integers")
-        if not all(0 <= c <= 255 for c in (r, g, b)):
-            print_error("--rgb channel values must be 0-255")
+            r, g, b = validate_rgb_str(args.rgb)
+        except Exception as exc:
+            print_error(str(exc))
     elif args.cmyk:
         parts = args.cmyk.split(",")
         if len(parts) != 4:
@@ -105,13 +90,12 @@ def run_color_name(args, now=None):
         g = round(255 * (1 - m) * (1 - k))
         b = round(255 * (1 - y) * (1 - k))
 
-    h, _s, _v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-    hue = round(h * 360)
+    hue = rgb_to_hue(r, g, b)
     lo = max(0, hue - 5)
     hi = min(360, hue + 5)
     range_key = f"{lo}-{hi}"
 
-    raw = _load_raw()
+    raw = load_raw_config()
     raw.setdefault("color_names", {})
     old = raw["color_names"].get(range_key)
     raw["color_names"][range_key] = name

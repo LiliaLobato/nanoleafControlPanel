@@ -28,19 +28,28 @@ def fmt_profile(profile: LightProfile) -> str:
     return f"HSB({profile.hue}, {profile.saturation}, {profile.brightness})"
 
 
-def confirm_config_set(key: str, stored_value, *, prev=None, verbose: bool = False) -> None:
-    """Print a confirmation line after saving a config value."""
-    if isinstance(stored_value, str) and ":" in stored_value:
-        try:
-            from datetime import datetime as _dt
-            t = _dt.strptime(stored_value, "%H:%M").time()
-            display = fmt_time(t)
-        except ValueError:
-            display = repr(stored_value)
-    else:
-        display = repr(stored_value)
+def fmt_config_value(key: str, validated_value) -> str:
+    """Return a display-ready string for a validated config value.
 
-    line = f"  ✓ {key} set to {display}"
+    Time fields (str "HH:MM") are formatted with both 24h and 12h.
+    All other types use repr().
+    """
+    if isinstance(validated_value, str) and len(validated_value) == 5 and validated_value[2] == ":":
+        try:
+            t = datetime.strptime(validated_value, "%H:%M").time()
+            return fmt_time(t)
+        except ValueError:
+            pass
+    return repr(validated_value)
+
+
+def confirm_config_set(key: str, display_value: str, *, prev=None, verbose: bool = False) -> None:
+    """Print a confirmation line after saving a config value.
+
+    display_value must be a pre-formatted string (caller is responsible for
+    formatting — use fmt_config_value() for the standard treatment).
+    """
+    line = f"  ✓ {key} set to {display_value}"
     if verbose and prev is not None:
         line += f"  (was {prev!r})"
     print(line)

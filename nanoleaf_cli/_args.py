@@ -28,6 +28,7 @@ from nanoleaf_cli.commands.lamp import (
     run_info as lamp_info,
     run_ping as lamp_ping,
 )
+from nanoleaf_cli._validation import validate_hue as _validate_hue
 from nanoleaf_cli.commands.status import run as status_run
 from nanoleaf_cli.commands.error import run as error_run
 from nanoleaf_cli.commands.debug import run_on as debug_on, run_off as debug_off
@@ -140,8 +141,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_preview.set_defaults(func=_help_func(p_preview))
     prev_sub = p_preview.add_subparsers(dest="preview_action", required=True)
 
-    p_prev_hue = prev_sub.add_parser("hue", help="preview a hue value (0-360)")
-    p_prev_hue.add_argument("value", type=int, help="hue 0-360")
+    p_prev_hue = prev_sub.add_parser("hue", help="preview a hue value (0-359)")
+    p_prev_hue.add_argument("value", type=_validate_hue, help="hue 0-359")
     p_prev_hue.set_defaults(func=preview_hue)
 
     p_prev_profile = prev_sub.add_parser("profile", help="preview a named light profile")

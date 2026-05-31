@@ -9,6 +9,7 @@ from controller.dateTime import parse_iso
 from controller.phase import calculate_phase
 from controller.state import STATE_PATH, load_state, should_respect_dnd
 from nanoleaf_cli._formatting import fmt_time
+from weather.weather_cache import reconstruct_cached_weather
 
 
 def run(args, now=None):
@@ -21,17 +22,9 @@ def run(args, now=None):
     config = load_config()
     state = load_state()
 
-    # Reconstruct weather from cache (no live API call)
-    weather = None
-    cache = state.get("weather_cache")
     lat = os.getenv("OPENWEATHER_LATITUDE")
     lon = os.getenv("OPENWEATHER_LONGITUDE")
-    if cache and cache.get("raw_data") and lat and lon:
-        try:
-            from weather.openWeather import OpenWeatherLight
-            weather = OpenWeatherLight.from_cache(cache["raw_data"], lat, lon)
-        except Exception:
-            pass
+    weather = reconstruct_cached_weather(state, lat, lon)
 
     phase = calculate_phase(now, weather, config, state)
 
@@ -39,6 +32,7 @@ def run(args, now=None):
     print(f"  time        {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
     # Weather
+    cache = state.get("weather_cache")
     if weather:
         tz = now.tzinfo
         sunrise = weather.get_sunrise_dt(tz=tz)

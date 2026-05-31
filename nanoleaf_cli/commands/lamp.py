@@ -1,25 +1,14 @@
 """lamp commands — on, off, info, ping."""
 
 import json
-import os
 
-from nanoleaf.nanoleafLight import NanoleafLight
+from nanoleaf_cli._lamp_factory import make_light
 from nanoleaf_cli._formatting import print_error
 from controller.state import load_state, save_state, handle_lamp_success
 
 
-def _make_light() -> NanoleafLight:
-    ip = os.getenv("NANOLEAF_IP_ADDRESS")
-    token = os.getenv("NANOLEAF_AUTH_TOKEN")
-    if not ip:
-        print_error("NANOLEAF_IP_ADDRESS is not set")
-    if not token:
-        print_error("NANOLEAF_AUTH_TOKEN is not set")
-    return NanoleafLight("nanoleaf", ip, token)
-
-
 def run_on(args, now=None):
-    light = _make_light()
+    light = make_light()
     ok = light.power_on()
     if ok:
         print("  ✓ lamp on")
@@ -28,7 +17,7 @@ def run_on(args, now=None):
 
 
 def run_off(args, now=None):
-    light = _make_light()
+    light = make_light()
     ok = light.power_off()
     if ok:
         print("  ✓ lamp off")
@@ -37,7 +26,7 @@ def run_off(args, now=None):
 
 
 def run_info(args, now=None):
-    light = _make_light()
+    light = make_light()
     try:
         info = light.get_info()
         print(json.dumps(info, indent=2))
@@ -46,7 +35,7 @@ def run_info(args, now=None):
 
 
 def run_ping(args, now=None):
-    light = _make_light()
+    light = make_light()
     reachable = light.check_heartbeat()
     if not reachable:
         print_error("lamp unreachable — backoff not cleared")
@@ -64,7 +53,6 @@ def run_ping(args, now=None):
     from controller.config import LightProfile
     from nanoleaf.color_helper import describe_color
     controller_main(now=now)
-    # Show what was applied by reading back the saved state
     applied = (load_state().get("last_applied") or {})
     if applied:
         profile = applied.get("profile", {})

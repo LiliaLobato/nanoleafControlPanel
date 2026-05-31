@@ -4,6 +4,7 @@ describe_color() helper: translates a LightProfile into a human-readable
 description used by CLI messages and verbose controller logs.
 """
 
+import colorsys
 import logging
 
 from controller.config import CONFIG_PATH, LightProfile, read_json_cached
@@ -95,6 +96,18 @@ def _lookup(value: int, defaults: list, overrides: dict) -> str:
         return "unknown"
     candidates.sort(key=lambda x: x[0])
     return candidates[0][1]
+
+
+def rgb_to_hue(r: int, g: int, b: int) -> int:
+    """Convert RGB (0–255 each) to a Nanoleaf hue value (0–359)."""
+    h, _, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return min(round(h * 360), 359)
+
+
+def rgb_to_hsb(r: int, g: int, b: int) -> tuple[int, int, int]:
+    """Convert RGB (0–255 each) to Nanoleaf HSB (hue 0–359, sat 0–100, bri 0–100)."""
+    h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return min(round(h * 360), 359), round(s * 100), round(v * 100)
 
 
 def describe_color(profile: LightProfile) -> str:

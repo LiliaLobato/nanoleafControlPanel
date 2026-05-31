@@ -134,14 +134,18 @@ class TestSetHsb:
             assert light.set_hsb(10, 80, 25) is False
 
     @pytest.mark.parametrize("hue,sat,brightness", [
-        (360, 50, 50),   # hue=360 is outside Nanoleaf API range (0–359)
-        (361, 50, 50),   # hue clearly out of range
         (180, 101, 50),  # sat out of range
         (180, 50, 101),  # brightness out of range
     ])
     def test_raises_on_out_of_range(self, light, hue, sat, brightness):
         with pytest.raises(ValueError):
             light.set_hsb(hue, sat, brightness)
+
+    def test_hue_360_is_clamped(self, light):
+        with patch("requests.request", return_value=_mock_response(204)) as mock_req:
+            assert light.set_hsb(360, 50, 50) is True
+            body = json.loads(mock_req.call_args[1]["data"])
+            assert body["hue"]["value"] == 359
 
     def test_on_false_included_in_body(self, light):
         """on=False batches power-off with color so pre-staging never turns the lamp on."""

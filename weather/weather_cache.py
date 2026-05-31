@@ -114,6 +114,27 @@ def get_weather(state: dict, now: datetime, config: Config) -> Optional[OpenWeat
 
 
 # ---------------------------------------------------------------------------
+# Cache reconstruction helper (used by CLI status command)
+# ---------------------------------------------------------------------------
+
+def reconstruct_cached_weather(
+    state: dict,
+    lat: Optional[str],
+    lon: Optional[str],
+) -> Optional[OpenWeatherLight]:
+    """Reconstruct an OpenWeatherLight from the state cache, or None if unavailable."""
+    if not lat or not lon:
+        return None
+    cache = state.get("weather_cache")
+    if not cache or not cache.get("raw_data"):
+        return None
+    try:
+        return OpenWeatherLight.from_cache(cache["raw_data"], lat, lon)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Day-phase darkness evaluation with oscillation lockout
 # ---------------------------------------------------------------------------
 
