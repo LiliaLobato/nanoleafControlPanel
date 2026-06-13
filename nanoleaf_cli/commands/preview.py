@@ -133,13 +133,20 @@ def run_sparkle(args, now=None):
 
     with get_preview_lock():
         orig = light.get_full_state()
-        print(f"  previewing for {duration} seconds...", end="", flush=True)
+        print(f"  sending sparkle ({len(panel_ids)} panels)...", end="", flush=True)
         try:
             _apply(light)
+            # Large animData payloads take ~2s for the lamp to parse and start.
+            # Wait before counting down so the timer reflects actual run time.
+            _time.sleep(2)
             for i in range(duration, 0, -1):
                 print(f"\r  reverting in {i}s...  ", end="", flush=True)
                 _time.sleep(1)
             print("\r  reverting...               ", end="", flush=True)
         finally:
+            # Power off first to stop the looping animation, then restore.
+            # PUT /state alone doesn't reliably exit effect mode mid-loop.
+            light.power_off()
+            _time.sleep(0.3)
             _revert(light, orig)
             print("\r  done.                       ")
