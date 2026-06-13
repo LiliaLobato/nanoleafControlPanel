@@ -32,6 +32,8 @@ from nanoleaf_cli._validation import (
     validate_hue as _validate_hue,
     validate_saturation as _validate_saturation,
     validate_brightness as _validate_brightness,
+    validate_sparkle_speed as _validate_sparkle_speed,
+    validate_sparkle_floor as _validate_sparkle_floor,
 )
 from nanoleaf_cli.commands.status import run as status_run
 from nanoleaf_cli.commands.error import run as error_run
@@ -186,6 +188,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_party.add_argument(
         "--fade-duration", type=int, metavar="MIN", dest="fade_duration",
         help="fade window in minutes (implies --fade true)",
+    )
+    p_party.add_argument(
+        "--speed", type=_validate_sparkle_speed, metavar="N",
+        help="sparkle drift speed 1 (slow candlelight) – 10 (fast); overrides config for this session",
+    )
+    p_party.add_argument(
+        "--floor", type=_validate_sparkle_floor, metavar="N",
+        help="sparkle floor brightness %% 0–100; overrides config.sparkle_floor_pct for this session",
     )
     p_party.set_defaults(func=party_run)
 

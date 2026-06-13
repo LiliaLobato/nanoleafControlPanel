@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 from nanoleaf.color_helper import describe_color
 from controller.config import load_config
+from nanoleaf.sparkle import build_sparkle_effect
 from controller.dateTime import parse_iso
 from controller.log_setup import setup_logging
 from controller.phase import calculate_phase
@@ -204,6 +205,21 @@ def run(now: Optional[datetime] = None) -> None:
         save_state(state)
         return
 
+    # --- CT mode current guard cap ---------------------------------------
+    # When CT mode is above threshold, cap brightness instead of sparkle
+    # (animData is RGB-only; sparkle cannot run in CT mode).
+    current_guard_active = None
+    if (config.current_guard_enabled
+            and effective_color.mode == "ct"
+            and effective_color.brightness >= config.current_guard_threshold):
+        capped = config.current_guard_threshold - 5
+        logger.info(
+            "CT mode brightness capped: %d → %d (current_guard_active)",
+            effective_color.brightness, capped,
+        )
+        effective_color = dataclasses.replace(effective_color, brightness=capped)
+        current_guard_active = "ct_cap"
+
     # --- Apply -----------------------------------------------------------
     logger.debug(
         "→ Sending color %s, power %s",
@@ -211,8 +227,38 @@ def run(now: Optional[datetime] = None) -> None:
         "ON" if should_be_on else "OFF",
     )
 
+    sparkle_override = (state.get("party_mode") or {}).get("sparkle_override", {})
+    sparkle_speed = sparkle_override.get("speed", config.sparkle_speed)
+    sparkle_floor = sparkle_override.get("floor_pct", config.sparkle_floor_pct)
+
     try:
-        ok = apply_profile(light, effective_color, should_be_on, light_state)
+        if (config.current_guard_enabled
+                and effective_color.mode == "hsb"
+                and effective_color.brightness >= config.current_guard_threshold
+                and should_be_on):
+            panel_ids = state.get("panel_ids") or []
+            if not panel_ids:
+                panel_ids = light.get_panel_ids()
+                if panel_ids:
+                    state["panel_ids"] = panel_ids
+            if not panel_ids:
+                logger.warning(
+                    "current_guard: get_panel_ids() returned empty — "
+                    "falling back to apply_profile this tick"
+                )
+                ok = apply_profile(light, effective_color, should_be_on, light_state)
+            else:
+                effect = build_sparkle_effect(
+                    panel_ids, effective_color, sparkle_floor, sparkle_speed
+                )
+                ok = light.write_effect(effect)
+                current_guard_active = "sparkle"
+                logger.debug(
+                    "Sparkle effect written (speed=%d, floor=%d%%, panels=%d)",
+                    sparkle_speed, sparkle_floor, len(panel_ids),
+                )
+        else:
+            ok = apply_profile(light, effective_color, should_be_on, light_state)
     except Exception as exc:
         handle_lamp_failure(state, now, config, exc)
         save_state(state)
@@ -233,12 +279,15 @@ def run(now: Optional[datetime] = None) -> None:
     else:
         logger.debug("→ Power: no change (staying %s)", "ON" if should_be_on else "OFF")
 
-    state["last_applied"] = {
+    last_applied_entry = {
         "power": should_be_on,
         "profile": dataclasses.asdict(effective_color),
         "phase": phase,
         "timestamp": now.isoformat(),
     }
+    if current_guard_active:
+        last_applied_entry["current_guard_active"] = current_guard_active
+    state["last_applied"] = last_applied_entry
     if phase == "day" and prev_power != should_be_on:
         state["last_daytime_toggle_at"] = now.isoformat()
 

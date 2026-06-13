@@ -94,6 +94,10 @@ def validate_bool(v: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected true/false/yes/no/1/0, got {v!r}")
 
 
+validate_sparkle_speed = _int_range(1, 10, "sparkle_speed")
+validate_sparkle_floor = _int_range(0, 100, "sparkle_floor_pct")
+
+
 def validate_backoff_schedule(v: str) -> list[int]:
     """Accept a JSON array '[5,10,20]' or comma-separated '5,10,20'."""
     v = v.strip()
