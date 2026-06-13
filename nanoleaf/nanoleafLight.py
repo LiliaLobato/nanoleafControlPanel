@@ -81,9 +81,13 @@ class NanoleafLight:
         url = f"{self._base_url}/{self.auth_token}{path}"
         try:
             response = requests.request(method, url, **kwargs)
-        except (RequestsConnectionError, Timeout) as exc:
+        except Timeout as exc:
             raise NanoleafConnectionError(
-                f"Connection failed to {self.ip}:{self.port}"
+                f"Timeout connecting to {self.ip}:{self.port}"
+            ) from exc
+        except RequestsConnectionError as exc:
+            raise NanoleafConnectionError(
+                f"Connection refused by {self.ip}:{self.port}"
             ) from exc
         except RequestException as exc:
             raise NanoleafConnectionError(
@@ -302,7 +306,10 @@ class NanoleafLight:
         :returns: True if successful, otherwise False
         """
         try:
-            self._request("PUT", "/effects", data=json.dumps({"write": effect_data}))
+            # Large animData payloads (~5 KB for 51 panels) can take the lamp
+            # several seconds to parse; use a generous read timeout.
+            self._request("PUT", "/effects", data=json.dumps({"write": effect_data}),
+                          timeout=(3, 20))
             return True
         except NanoleafAuthError as exc:
             logger.warning("write_effect: auth error (%s)", exc)
