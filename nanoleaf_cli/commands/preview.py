@@ -2,9 +2,10 @@
 
 import time as _time
 
-from controller.config import load_profiles
-from controller.state import get_preview_lock
+from controller.config import load_config, load_profiles
+from controller.state import get_preview_lock, load_state
 from nanoleaf.nanoleafLight import NanoleafLight
+from nanoleaf.sparkle import build_sparkle_effect
 from nanoleaf_cli._lamp_factory import make_light
 from nanoleaf_cli._formatting import print_error
 from nanoleaf_cli._validation import validate_profile_name, validate_rgb_str
@@ -70,3 +71,75 @@ def run_color(args, now=None):
         return
     light = make_light()
     _do_preview(light, lambda l: l.set_color(rgb, on=True))
+
+
+def run_sparkle(args, now=None):
+    """Preview the sparkle scatter effect on the lamp for --duration seconds, then revert.
+
+    Uses the current effective profile from state if no HSB overrides are given.
+    Reads sparkle_speed and sparkle_floor_pct from config unless overridden by args.
+    """
+    config = load_config()
+
+    # Resolve brightness source: args override → state last_applied → config threshold default
+    state = load_state()
+    last_profile = (state.get("last_applied") or {}).get("profile") or {}
+
+    hue        = getattr(args, "hue",        None)
+    sat        = getattr(args, "sat",        None)
+    brightness = getattr(args, "brightness", None)
+
+    hue        = int(hue)        if hue        is not None else last_profile.get("hue",        20)
+    sat        = int(sat)        if sat        is not None else last_profile.get("saturation",  70)
+    brightness = int(brightness) if brightness is not None else last_profile.get("brightness",  config.current_guard_threshold)
+
+    speed = int(args.speed) if getattr(args, "speed", None) is not None else config.sparkle_speed
+    floor = int(args.floor) if getattr(args, "floor", None) is not None else config.sparkle_floor_pct
+    duration = int(getattr(args, "duration", 10) or 10)
+
+    if brightness < config.current_guard_threshold:
+        print(
+            f"  Note: brightness={brightness} is below current_guard_threshold="
+            f"{config.current_guard_threshold}. Sparkle will still run for preview, "
+            f"but it won't fire automatically at this brightness in the controller."
+        )
+
+    light = make_light()
+
+    # Fetch panel IDs (use state cache if available)
+    panel_ids = state.get("panel_ids") or []
+    if not panel_ids:
+        try:
+            panel_ids = light.get_panel_ids()
+        except Exception as exc:
+            print_error(f"could not fetch panel IDs: {exc}")
+            return
+    if not panel_ids:
+        print_error("lamp returned no panel IDs — cannot build sparkle effect")
+        return
+
+    from controller.config import LightProfile
+    profile = LightProfile(mode="hsb", hue=hue, saturation=sat, brightness=brightness)
+    effect = build_sparkle_effect(panel_ids, profile, floor, speed)
+
+    print(
+        f"  Sparkle preview: hue={hue} sat={sat} bri={brightness} "
+        f"speed={speed}/10 floor={floor}% panels={len(panel_ids)}"
+    )
+
+    def _apply(l):
+        if not l.write_effect(effect):
+            raise RuntimeError("write_effect failed — lamp rejected payload")
+
+    with get_preview_lock():
+        orig = light.get_full_state()
+        print(f"  previewing for {duration} seconds...", end="", flush=True)
+        try:
+            _apply(light)
+            for i in range(duration, 0, -1):
+                print(f"\r  reverting in {i}s...  ", end="", flush=True)
+                _time.sleep(1)
+            print("\r  reverting...               ", end="", flush=True)
+        finally:
+            _revert(light, orig)
+            print("\r  done.                       ")

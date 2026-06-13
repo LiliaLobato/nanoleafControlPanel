@@ -20,6 +20,7 @@ from nanoleaf_cli.commands.preview import (
     run_profile as preview_profile,
     run_hsb as preview_hsb,
     run_color as preview_color,
+    run_sparkle as preview_sparkle,
 )
 from nanoleaf_cli.commands.party import run as party_run
 from nanoleaf_cli.commands.lamp import (
@@ -164,6 +165,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_prev_color = prev_sub.add_parser("color", help="preview an RGB color")
     p_prev_color.add_argument("rgb", help="R,G,B values 0-255 (e.g. 255,0,128)")
     p_prev_color.set_defaults(func=preview_color)
+
+    p_prev_sparkle = prev_sub.add_parser(
+        "sparkle",
+        help="preview sparkle scatter effect then revert",
+    )
+    p_prev_sparkle.add_argument("--hue", type=_validate_hue, metavar="H", help="hue 0-359 (default: from last_applied)")
+    p_prev_sparkle.add_argument("--sat", type=_validate_saturation, metavar="S", help="saturation 0-100")
+    p_prev_sparkle.add_argument("--brightness", type=_validate_brightness, metavar="B", help="brightness 0-100")
+    p_prev_sparkle.add_argument("--speed", type=_validate_sparkle_speed, metavar="N", help="drift speed 1-10 (default: config)")
+    p_prev_sparkle.add_argument("--floor", type=_validate_sparkle_floor, metavar="N", help="floor brightness %% 0-100 (default: config)")
+    p_prev_sparkle.add_argument("--duration", type=int, default=10, metavar="SEC", help="seconds to hold preview (default: 10)")
+    p_prev_sparkle.set_defaults(func=preview_sparkle)
 
     # -------------------------------------------------------------------------
     # party
