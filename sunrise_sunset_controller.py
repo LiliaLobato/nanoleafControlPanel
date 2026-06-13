@@ -238,9 +238,13 @@ def run(now: Optional[datetime] = None) -> None:
                 and should_be_on):
             panel_ids = state.get("panel_ids") or []
             if not panel_ids:
+                logger.debug("current_guard: panel_ids cache miss — fetching from lamp")
                 panel_ids = light.get_panel_ids()
                 if panel_ids:
                     state["panel_ids"] = panel_ids
+                    logger.debug("current_guard: panel_ids cached (%d panels)", len(panel_ids))
+            else:
+                logger.debug("current_guard: panel_ids from cache (%d panels)", len(panel_ids))
             if not panel_ids:
                 logger.warning(
                     "current_guard: get_panel_ids() returned empty — "
@@ -254,10 +258,21 @@ def run(now: Optional[datetime] = None) -> None:
                 ok = light.write_effect(effect)
                 current_guard_active = "sparkle"
                 logger.debug(
-                    "Sparkle effect written (speed=%d, floor=%d%%, panels=%d)",
+                    "current_guard: sparkle written (speed=%d, floor=%d%%, panels=%d)",
                     sparkle_speed, sparkle_floor, len(panel_ids),
                 )
         else:
+            if not config.current_guard_enabled:
+                logger.debug("current_guard: disabled (current_guard_enabled=False)")
+            elif effective_color.mode != "hsb":
+                logger.debug("current_guard: skipped — mode=%s (HSB required)", effective_color.mode)
+            elif not should_be_on:
+                logger.debug("current_guard: skipped — lamp is off")
+            else:
+                logger.debug(
+                    "current_guard: skipped — brightness=%d below threshold=%d",
+                    effective_color.brightness, config.current_guard_threshold,
+                )
             ok = apply_profile(light, effective_color, should_be_on, light_state)
     except Exception as exc:
         handle_lamp_failure(state, now, config, exc)
@@ -296,8 +311,9 @@ def run(now: Optional[datetime] = None) -> None:
     logger.debug("State saved")
 
     logger.info(
-        "phase=%s override=%s color=%s on=%s",
+        "phase=%s override=%s color=%s on=%s%s",
         phase, override, describe_color(effective_color), should_be_on,
+        f" guard={current_guard_active}" if current_guard_active else "",
     )
     logger.debug("─── Run complete (%.2fs) ───", _time.monotonic() - t0)
 
