@@ -100,6 +100,12 @@ class Config:
     # --- Verbose logging ---
     verbose: bool = False
 
+    # --- Current guard / sparkle scatter (Phase 1 v2) ---
+    current_guard_enabled: bool = True
+    current_guard_threshold: int = 80
+    sparkle_speed: int = 3
+    sparkle_floor_pct: int = 70
+
 
 # ---------------------------------------------------------------------------
 # Light profiles

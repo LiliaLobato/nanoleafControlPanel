@@ -265,6 +265,46 @@ class NanoleafLight:
             snapshot["hue"], snapshot["sat"], snapshot["brightness"], on=on
         )
 
+    # ------------------------------------------------------------------
+    # Panel layout
+    # ------------------------------------------------------------------
+
+    def get_panel_ids(self) -> list[int]:
+        """Return sorted list of panel IDs from the device layout.
+
+        Reads get_info()['panelLayout']['layout']['positionData'][i]['panelId'].
+
+        :raises NanoleafConnectionError: on network failure
+        :raises NanoleafAuthError: on auth failure
+        :raises NanoleafRequestError: on HTTP error
+        :raises KeyError: if the response shape is unexpected
+        """
+        info = self.get_info()
+        position_data = info["panelLayout"]["layout"]["positionData"]
+        return sorted(p["panelId"] for p in position_data)
+
+    # ------------------------------------------------------------------
+    # Effects
+    # ------------------------------------------------------------------
+
+    def write_effect(self, effect_data: dict) -> bool:
+        """PUT /effects with {'write': effect_data}. Returns True on 2xx.
+
+        effect_data must include 'command': 'display' (volatile — runs immediately,
+        no NVRAM write). Never use 'command': 'add'; at one cron tick per 2 min
+        that is ~500 k writes/year and degrades the device's flash storage.
+
+        :returns: True if successful, otherwise False
+        """
+        try:
+            self._request("PUT", "/effects", data=json.dumps({"write": effect_data}))
+            return True
+        except NanoleafAuthError as exc:
+            logger.warning("write_effect: auth error (%s)", exc)
+            return False
+        except NanoleafError:
+            return False
+
     def set_color(
         self,
         rgb: tuple[int, int, int],
