@@ -270,9 +270,11 @@ class NanoleafLight:
     # ------------------------------------------------------------------
 
     def get_panel_ids(self) -> list[int]:
-        """Return sorted list of panel IDs from the device layout.
+        """Return sorted list of display panel IDs from the device layout.
 
         Reads get_info()['panelLayout']['layout']['positionData'][i]['panelId'].
+        Excludes shapeType 1 (Rhythm controller module) — it is not a display
+        panel and must not appear in animData payloads.
 
         :raises NanoleafConnectionError: on network failure
         :raises NanoleafAuthError: on auth failure
@@ -281,7 +283,10 @@ class NanoleafLight:
         """
         info = self.get_info()
         position_data = info["panelLayout"]["layout"]["positionData"]
-        return sorted(p["panelId"] for p in position_data)
+        return sorted(
+            p["panelId"] for p in position_data
+            if p.get("shapeType") != 1  # 1 = Rhythm module, not a display panel
+        )
 
     # ------------------------------------------------------------------
     # Effects
