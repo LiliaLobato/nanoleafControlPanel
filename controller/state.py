@@ -15,7 +15,7 @@ from typing import Optional
 import filelock
 
 from controller.config import Config
-from controller.dateTime import combine, parse_iso
+from controller.dateTime import combine, get_morning_ramp_start, parse_iso
 
 logger = logging.getLogger(__name__)
 
@@ -197,11 +197,7 @@ def clear_dnd_if_expired(
             state["dnd_scope"] = None
 
     elif scope == "overnight":
-        morning_latest = combine(now, config.morning_latest_start)
-        if weather:
-            morning_ramp_start = min(weather.get_sunrise_dt(tz=now.tzinfo), morning_latest)
-        else:
-            morning_ramp_start = morning_latest
+        morning_ramp_start = get_morning_ramp_start(now, config.morning_latest_start, weather)
         if now >= morning_ramp_start:
             state["do_not_disturb_until"] = None
             state["dnd_scope"] = None
@@ -268,20 +264,41 @@ def detect_manual_override(
     light_state: dict,
     last_applied: dict,
     phase: str,
+    now: Optional[datetime] = None,
+    max_stale_minutes: int = 30,
 ) -> str:
     """Detect whether the user manually changed power since the last cron run.
 
     Compares actual lamp power (light_state["on"]) against the expected power
     from our last applied state (last_applied["power"]).
 
+    If last_applied is older than max_stale_minutes, the controller was offline
+    for an extended period (crash/reboot) and we cannot distinguish a user action
+    from the lamp simply being in whatever state it was left. In that case we
+    return "none" to avoid false override detection.
+
     Returns one of:
-      "none"               — no change detected
+      "none"               — no change detected (or last_applied is stale)
       "manual_on"          — user turned ON when we expected OFF
       "manual_off"         — user turned OFF when we expected ON
       "late_night_trigger" — user turned ON after hard cutoff (off phase)
     """
     if not last_applied:
         return "none"
+
+    if now is not None:
+        ts = last_applied.get("timestamp")
+        if ts:
+            try:
+                elapsed_min = (now - parse_iso(ts)).total_seconds() / 60
+                if elapsed_min > max_stale_minutes:
+                    logger.debug(
+                        "Override detection skipped — last_applied is %.0f min old (threshold=%d min)",
+                        elapsed_min, max_stale_minutes,
+                    )
+                    return "none"
+            except (ValueError, TypeError):
+                pass
 
     actual_on = light_state.get("on", False)
     expected_on = last_applied.get("power", False)

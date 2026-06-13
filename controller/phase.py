@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from controller.config import Config
-from controller.dateTime import combine, parse_iso
+from controller.dateTime import combine, get_morning_ramp_start, parse_iso
 from weather.openWeather import OpenWeatherLight
 
 
@@ -35,12 +35,8 @@ def calculate_phase(
         hard_cutoff_ramp → [night_full_time, hard_cutoff_time)     NIGHT→OFF
         off / late_night_override → [hard_cutoff_time, ...)
     """
+    morning_ramp_start = get_morning_ramp_start(now, config.morning_latest_start, weather)
     if weather:
-        sunrise_dt = weather.get_sunrise_dt(tz=now.tzinfo)
-        morning_ramp_start = min(
-            sunrise_dt,
-            combine(now, config.morning_latest_start),
-        )
         adjusted_sunset = weather.get_adjusted_sunset(
             config.cloud_threshold,
             config.adverse_offset_min,
@@ -48,7 +44,6 @@ def calculate_phase(
             tz=now.tzinfo,
         )
     else:
-        morning_ramp_start = combine(now, config.morning_latest_start)
         adjusted_sunset = combine(now, config.force_evening_time)
 
     full_morning_dt  = combine(now, config.full_morning_time)

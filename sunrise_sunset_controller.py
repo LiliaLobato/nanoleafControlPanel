@@ -154,7 +154,7 @@ def run(now: Optional[datetime] = None) -> None:
 
     # --- Override detection and handling ---------------------------------
     last_applied = state.get("last_applied") or {}
-    override = detect_manual_override(light_state, last_applied, phase)
+    override = detect_manual_override(light_state, last_applied, phase, now=now)
     logger.debug(
         "Override: %s (expected %s, actual %s)",
         override,

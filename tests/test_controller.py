@@ -26,7 +26,7 @@ from controller.profiles import (
     calculate_effective_color_profile,
     calculate_target_profile,
 )
-from controller.dateTime import parse_iso
+from controller.dateTime import get_morning_ramp_start, parse_iso
 from controller.state import (
     _empty_state,
     apply_dnd_flag,
@@ -265,6 +265,75 @@ class TestDetectManualOverride:
         for light_state, last_applied, phase, expected, label in cases:
             result = detect_manual_override(light_state, last_applied, phase)
             assert result == expected, f"{label}: expected {expected!r}, got {result!r}"
+
+    def test_stale_last_applied_suppresses_override(self):
+        """If last_applied is >30 min old, a power mismatch is not treated as a user override.
+
+        Regression: Pi offline overnight left last_applied["power"]=True from the previous
+        evening. At morning_ramp start the lamp was off (user slept). detect_manual_override
+        saw expected_on=True, actual_on=False and returned "manual_off", triggering DND
+        until 07:00 and blocking the entire sunrise simulation.
+        """
+        now = dt(5, 16)
+        stale_ts = (now - timedelta(hours=6)).isoformat()  # Pi was offline since 23:16
+        last_applied = {"power": True, "phase": "hard_cutoff_ramp", "timestamp": stale_ts}
+        result = detect_manual_override({"on": False}, last_applied, "morning_ramp", now=now)
+        assert result == "none", "stale last_applied should not trigger manual_off"
+
+    def test_fresh_last_applied_still_detects_override(self):
+        """A recent last_applied (within 30 min) still triggers override detection."""
+        now = dt(5, 16)
+        fresh_ts = (now - timedelta(minutes=2)).isoformat()
+        last_applied = {"power": True, "phase": "morning_ramp", "timestamp": fresh_ts}
+        result = detect_manual_override({"on": False}, last_applied, "morning_ramp", now=now)
+        assert result == "manual_off", "fresh last_applied should still detect manual_off"
+
+
+# ---------------------------------------------------------------------------
+# Stale sunrise guard
+# ---------------------------------------------------------------------------
+
+class TestGetMorningRampStart:
+    def test_today_sunrise_used(self):
+        """Sunrise on today's date is used as ramp start when earlier than morning_latest."""
+        today_sunrise = dt(5, 14)  # 2024-06-15 05:14 UTC
+        w = weather_mock(sunrise_hour=5, sunrise_min=14)
+        result = get_morning_ramp_start(dt(0, 0), DEFAULT_CFG.morning_latest_start, w)
+        assert result == today_sunrise
+
+    def test_yesterday_sunrise_ignored(self):
+        """Sunrise from a previous day (stale cache) falls back to morning_latest_start.
+
+        Regression: OpenWeather cache from the previous evening carries yesterday's sunrise.
+        After midnight the date rolls over; min(yesterday_sunrise, today_morning_latest)
+        evaluates to yesterday_sunrise — a datetime in the past — causing morning_ramp_start
+        to precede midnight and calculate_phase() to return morning_ramp at 00:00.
+        """
+        w = MagicMock()
+        yesterday_sunrise = datetime(2024, 6, 14, 5, 13, tzinfo=UTC)  # previous day
+        w.get_sunrise_dt.return_value = yesterday_sunrise
+        now = dt(0, 0)  # midnight June 15
+        result = get_morning_ramp_start(now, DEFAULT_CFG.morning_latest_start, w)
+        assert result == datetime(2024, 6, 15, 6, 0, tzinfo=UTC), \
+            "stale sunrise should fall back to morning_latest_start (06:00 today)"
+
+    def test_no_weather_uses_morning_latest(self):
+        result = get_morning_ramp_start(dt(0, 0), DEFAULT_CFG.morning_latest_start, None)
+        assert result == datetime(2024, 6, 15, 6, 0, tzinfo=UTC)
+
+    def test_midnight_not_morning_ramp_with_stale_sunrise(self):
+        """calculate_phase returns pre_morning at midnight when weather cache is stale.
+
+        Regression: midnight cron tick sees stale yesterday sunrise → morning_ramp_start
+        in the past → phase=morning_ramp → lamp turns on at midnight.
+        """
+        w = MagicMock()
+        w.get_sunrise_dt.return_value = datetime(2024, 6, 14, 5, 13, tzinfo=UTC)
+        w.get_adjusted_sunset.return_value = dt(21, 0)
+        w.is_dark_outside.return_value = False
+        result = calculate_phase(dt(0, 0), w, DEFAULT_CFG, _empty_state())
+        assert result == "pre_morning", \
+            f"expected pre_morning at midnight with stale sunrise, got {result!r}"
 
 
 # ---------------------------------------------------------------------------
