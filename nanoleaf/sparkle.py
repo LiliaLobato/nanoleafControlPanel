@@ -17,7 +17,10 @@ import colorsys
 from controller.config import LightProfile
 from nanoleaf.effects import speed_to_transtime
 
-_NUM_FRAMES = 6  # frames per per-panel brightness cycle
+_NUM_FRAMES = 2  # frames per per-panel brightness cycle
+# 51-panel lamps crash on 6-frame payloads (~6.7 KB); 2 frames (~2.5 KB) is safe.
+# Phase offsets (even panels: floor→ceiling, odd: ceiling→floor) still create
+# the staggered brightness variation that prevents simultaneous full-current draw.
 
 
 def hsb_to_rgb(hue: int, sat: int, brightness: int) -> tuple[int, int, int]:
