@@ -20,7 +20,6 @@ from dotenv import load_dotenv
 
 from nanoleaf.color_helper import describe_color
 from controller.config import load_config
-from nanoleaf.sparkle import build_sparkle_effect
 from controller.dateTime import parse_iso
 from controller.log_setup import setup_logging
 from controller.phase import calculate_phase
@@ -205,20 +204,28 @@ def run(now: Optional[datetime] = None) -> None:
         save_state(state)
         return
 
-    # --- CT mode current guard cap ---------------------------------------
-    # When CT mode is above threshold, cap brightness instead of sparkle
-    # (animData is RGB-only; sparkle cannot run in CT mode).
+    # --- Current guard brightness cap ------------------------------------
+    # Custom animData write_effect is not viable: 51-panel payloads lock up
+    # the Nanoleaf firmware regardless of frame count. Cap brightness for
+    # both HSB and CT modes above the threshold.
     current_guard_active = None
     if (config.current_guard_enabled
-            and effective_color.mode == "ct"
             and effective_color.brightness >= config.current_guard_threshold):
         capped = config.current_guard_threshold - 5
         logger.info(
-            "CT mode brightness capped: %d → %d (current_guard_active)",
-            effective_color.brightness, capped,
+            "current_guard: brightness capped %d → %d (mode=%s)",
+            effective_color.brightness, capped, effective_color.mode,
         )
         effective_color = dataclasses.replace(effective_color, brightness=capped)
-        current_guard_active = "ct_cap"
+        current_guard_active = "brightness_cap"
+    else:
+        if not config.current_guard_enabled:
+            logger.debug("current_guard: disabled")
+        elif effective_color.brightness < config.current_guard_threshold:
+            logger.debug(
+                "current_guard: skipped — brightness=%d below threshold=%d",
+                effective_color.brightness, config.current_guard_threshold,
+            )
 
     # --- Apply -----------------------------------------------------------
     logger.debug(
@@ -227,53 +234,8 @@ def run(now: Optional[datetime] = None) -> None:
         "ON" if should_be_on else "OFF",
     )
 
-    sparkle_override = (state.get("party_mode") or {}).get("sparkle_override", {})
-    sparkle_speed = sparkle_override.get("speed", config.sparkle_speed)
-    sparkle_floor = sparkle_override.get("floor_pct", config.sparkle_floor_pct)
-
     try:
-        if (config.current_guard_enabled
-                and effective_color.mode == "hsb"
-                and effective_color.brightness >= config.current_guard_threshold
-                and should_be_on):
-            panel_ids = state.get("panel_ids") or []
-            if not panel_ids:
-                logger.debug("current_guard: panel_ids cache miss — fetching from lamp")
-                panel_ids = light.get_panel_ids()
-                if panel_ids:
-                    state["panel_ids"] = panel_ids
-                    logger.debug("current_guard: panel_ids cached (%d panels)", len(panel_ids))
-            else:
-                logger.debug("current_guard: panel_ids from cache (%d panels)", len(panel_ids))
-            if not panel_ids:
-                logger.warning(
-                    "current_guard: get_panel_ids() returned empty — "
-                    "falling back to apply_profile this tick"
-                )
-                ok = apply_profile(light, effective_color, should_be_on, light_state)
-            else:
-                effect = build_sparkle_effect(
-                    panel_ids, effective_color, sparkle_floor, sparkle_speed
-                )
-                ok = light.write_effect(effect)
-                current_guard_active = "sparkle"
-                logger.debug(
-                    "current_guard: sparkle written (speed=%d, floor=%d%%, panels=%d)",
-                    sparkle_speed, sparkle_floor, len(panel_ids),
-                )
-        else:
-            if not config.current_guard_enabled:
-                logger.debug("current_guard: disabled (current_guard_enabled=False)")
-            elif effective_color.mode != "hsb":
-                logger.debug("current_guard: skipped — mode=%s (HSB required)", effective_color.mode)
-            elif not should_be_on:
-                logger.debug("current_guard: skipped — lamp is off")
-            else:
-                logger.debug(
-                    "current_guard: skipped — brightness=%d below threshold=%d",
-                    effective_color.brightness, config.current_guard_threshold,
-                )
-            ok = apply_profile(light, effective_color, should_be_on, light_state)
+        ok = apply_profile(light, effective_color, should_be_on, light_state)
     except Exception as exc:
         handle_lamp_failure(state, now, config, exc)
         save_state(state)

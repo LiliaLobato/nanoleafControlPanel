@@ -42,18 +42,28 @@ def run_ping(args, now=None):
     if not reachable:
         print_error("lamp unreachable — backoff not cleared")
         return
+
     state = load_state()
-    failures = state.get("lamp_failure_state", {}).get("consecutive_failures", 0)
+    pre_failures = (state.get("lamp_failure_state") or {}).get("consecutive_failures", 0)
     handle_lamp_success(state)
     save_state(state)
-    if failures > 0:
-        print(f"  ✓ lamp reachable — backoff cleared ({failures} failure(s) reset)")
+
+    if pre_failures > 0:
+        print(f"  ✓ lamp reachable — backoff cleared ({pre_failures} failure(s) reset)")
     else:
-        print("  ✓ lamp reachable — no active backoff")
+        print("  ✓ lamp reachable")
+
     print("  → applying current controller state...")
     from sunrise_sunset_controller import main as controller_main
     controller_main(now=now)
-    applied = (load_state().get("last_applied") or {})
+
+    final_state = load_state()
+    post_failures = (final_state.get("lamp_failure_state") or {}).get("consecutive_failures", 0)
+    if post_failures > pre_failures:
+        print_error("controller run failed — lamp may have become unreachable during apply")
+        return
+
+    applied = (final_state.get("last_applied") or {})
     if applied:
         profile = applied.get("profile", {})
         color = describe_color(LightProfile(**profile)) if profile else "?"
