@@ -94,7 +94,7 @@ class NanoleafLight:
             return response
         if response.status_code in (401, 403):
             raise NanoleafAuthError(f"HTTP {response.status_code}: auth error")
-        raise NanoleafRequestError(f"HTTP {response.status_code}")
+        raise NanoleafRequestError(f"HTTP {response.status_code}: {response.text[:200]}")
 
     # ------------------------------------------------------------------
     # Info
@@ -307,7 +307,8 @@ class NanoleafLight:
         except NanoleafAuthError as exc:
             logger.warning("write_effect: auth error (%s)", exc)
             return False
-        except NanoleafError:
+        except NanoleafError as exc:
+            logger.warning("write_effect: request failed (%s)", exc)
             return False
 
     def set_color(
