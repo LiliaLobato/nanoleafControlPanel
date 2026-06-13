@@ -15,7 +15,7 @@ from controller.config import (
     OFF_PROFILE,
     load_profiles,
 )
-from controller.dateTime import combine, parse_iso
+from controller.dateTime import combine, get_morning_ramp_start, parse_iso
 from nanoleaf.interpolation import interpolate_profiles
 from weather.openWeather import OpenWeatherLight
 from weather.weather_cache import evaluate_day_darkness
@@ -43,10 +43,7 @@ def _morning_ramp_profile(
     Stage 1 (first 80% of ramp): SUNRISE_START → SUNRISE_END  (HSB warm amber)
     Stage 2 (last  20% of ramp): SUNRISE_END   → MORNING       (cross-mode CT snap)
     """
-    if weather:
-        ramp_start = min(weather.get_sunrise_dt(tz=now.tzinfo), combine(now, config.morning_latest_start))
-    else:
-        ramp_start = combine(now, config.morning_latest_start)
+    ramp_start = get_morning_ramp_start(now, config.morning_latest_start, weather)
     ramp_end = combine(now, config.full_morning_time)
 
     total_secs = (ramp_end - ramp_start).total_seconds()

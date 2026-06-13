@@ -154,7 +154,7 @@ def run(now: Optional[datetime] = None) -> None:
 
     # --- Override detection and handling ---------------------------------
     last_applied = state.get("last_applied") or {}
-    override = detect_manual_override(light_state, last_applied, phase)
+    override = detect_manual_override(light_state, last_applied, phase, now=now)
     logger.debug(
         "Override: %s (expected %s, actual %s)",
         override,
@@ -192,7 +192,8 @@ def run(now: Optional[datetime] = None) -> None:
     elif override == "manual_on":
         state["do_not_disturb_until"] = None
         state["dnd_scope"] = None
-        logger.info("Manual ON detected (phase=%s) — DND cleared", phase)
+        should_be_on = True
+        logger.info("Manual ON detected (phase=%s) — DND cleared, lamp kept ON", phase)
 
     # --- Preview guard ---------------------------------------------------
     try:
