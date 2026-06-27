@@ -104,6 +104,37 @@ class TestGetInfo:
         with patch("requests.request", return_value=_mock_response(401)):
             assert light.get_full_state() == {}
 
+    def test_get_full_state_retries_on_connection_error(self, light):
+        """Connection errors trigger retries; all 3 attempts exhausted → returns {}."""
+        conn_err = requests_lib.exceptions.ConnectionError("unreachable")
+        with patch("requests.request", side_effect=conn_err) as mock_req, \
+             patch("time.sleep") as mock_sleep:
+            result = light.get_full_state(retries=2, retry_delay=10.0)
+        assert result == {}
+        assert mock_req.call_count == 3          # initial + 2 retries
+        assert mock_sleep.call_count == 2        # sleep between each retry
+        mock_sleep.assert_called_with(10.0)
+
+    def test_get_full_state_succeeds_on_retry(self, light):
+        """If a later attempt succeeds, the state dict is returned."""
+        conn_err = requests_lib.exceptions.ConnectionError("unreachable")
+        good_resp = _mock_response(200, json.dumps(FULL_INFO))
+        with patch("requests.request", side_effect=[conn_err, good_resp]) as mock_req, \
+             patch("time.sleep"):
+            result = light.get_full_state(retries=2, retry_delay=10.0)
+        assert result["on"] is True
+        assert result["hue"] == 30
+        assert mock_req.call_count == 2          # failed once, succeeded on second attempt
+
+    def test_get_full_state_does_not_retry_auth_error(self, light):
+        """Auth errors are not retried — no point re-sending a bad token."""
+        with patch("requests.request", return_value=_mock_response(401)) as mock_req, \
+             patch("time.sleep") as mock_sleep:
+            result = light.get_full_state(retries=2, retry_delay=10.0)
+        assert result == {}
+        assert mock_req.call_count == 1          # gave up immediately
+        assert mock_sleep.call_count == 0
+
 
 # ---------------------------------------------------------------------------
 # set_hsb — batched PUT /state

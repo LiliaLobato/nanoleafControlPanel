@@ -181,8 +181,8 @@ class TestConfigScalarFields:
         assert abs(load_config().dark_sun_elevation_deg - 18.5) < 0.01, \
             "dark_sun_elevation_deg should be 18.5 after set"
         _reset("dark_sun_elevation_deg")
-        assert abs(load_config().dark_sun_elevation_deg - 20.0) < 0.01, \
-            "dark_sun_elevation_deg should be default 20.0 after reset"
+        assert abs(load_config().dark_sun_elevation_deg - 35.0) < 0.01, \
+            "dark_sun_elevation_deg should be default 35.0 after reset"
 
     def test_verbose_true_false_and_aliases(self):
         from controller.config import load_config
@@ -223,8 +223,8 @@ class TestConfigScalarFields:
 
         # reset
         _reset("backoff_schedule_minutes")
-        assert load_config().backoff_schedule_minutes == [5, 10, 20, 40, 60], \
-            "After reset, backoff_schedule_minutes should be default [5, 10, 20, 40, 60]"
+        assert load_config().backoff_schedule_minutes == [1, 2, 5, 10, 20, 40, 60], \
+            "After reset, backoff_schedule_minutes should be default [1, 2, 5, 10, 20, 40, 60]"
 
 
 class TestConfigListAndResetAll:

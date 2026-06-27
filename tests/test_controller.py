@@ -753,7 +753,8 @@ class TestLampBackoff:
         assert is_lamp_in_backoff(state, dt(14, 0)) is False, \
             "no retry scheduled should NOT be in backoff"
 
-        # First failure: increments counter, records exception type, schedules 5-min retry
+        # First failure: increments counter, records exception type, schedules 1-min retry
+        # (default backoff_schedule_minutes = [1, 2, 5, 10, 20, 40, 60])
         state = empty_state()
         handle_lamp_failure(state, dt(14, 0), DEFAULT_CFG, ConnectionError("unreachable"))
         f = state["lamp_failure_state"]
@@ -762,8 +763,8 @@ class TestLampBackoff:
         assert f["last_failure_type"] == "ConnectionError", \
             f"exception type should be recorded as 'ConnectionError', got {f['last_failure_type']!r}"
         retry_secs = (parse_iso(f["next_retry_at"]) - dt(14, 0)).total_seconds()
-        assert retry_secs == 5 * 60, \
-            f"first failure should schedule a 5-min retry, got {retry_secs / 60:.1f} min"
+        assert retry_secs == 1 * 60, \
+            f"first failure should schedule a 1-min retry, got {retry_secs / 60:.1f} min"
 
         # Success: resets counter and clears retry
         state["lamp_failure_state"]["consecutive_failures"] = 3

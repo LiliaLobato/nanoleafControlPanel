@@ -98,6 +98,7 @@ def build_sparkle_effect(
     """
     return {
         "command": "display",
+        "version": "2.0",
         "animType": "custom",
         "animData": build_sparkle_animdata(
             panel_ids,

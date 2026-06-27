@@ -76,7 +76,7 @@ class Config:
     cloud_threshold: int = 60
 
     # --- Darkness detection ---
-    dark_sun_elevation_deg: float = 20.0
+    dark_sun_elevation_deg: float = 35.0
     dark_cloud_threshold: int = 75
 
     # --- Oscillation protection ---
@@ -90,7 +90,7 @@ class Config:
     party_default_fade_minutes: int = 30
 
     # --- Failure backoff ---
-    backoff_schedule_minutes: list[int] = field(default_factory=lambda: [5, 10, 20, 40, 60])
+    backoff_schedule_minutes: list[int] = field(default_factory=lambda: [1, 2, 5, 10, 20, 40, 60])
 
     # --- Cron tick interval ---
     # Must match the */N in the crontab entry. Controls the anchor-time window

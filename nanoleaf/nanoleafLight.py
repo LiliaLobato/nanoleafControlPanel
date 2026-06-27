@@ -9,6 +9,7 @@ https://github.com/MylesMor/nanoleafapi
 
 import json
 import logging
+import time
 from typing import Any, Optional
 
 from nanoleaf.color_helper import rgb_to_hsb
@@ -122,33 +123,47 @@ class NanoleafLight:
         response = self._request("GET", "")
         return json.loads(response.text)
 
-    def get_full_state(self) -> dict[str, Any]:
+    def get_full_state(self, retries: int = 2, retry_delay: float = 10.0) -> dict[str, Any]:
         """Return the lamp's current state using a single round-trip.
 
         Extracts the 'state' subfield from get_info() and returns a flat dict:
         {on, hue, sat, brightness, ct, colorMode}
 
+        On NanoleafConnectionError, retries up to `retries` times with `retry_delay`
+        seconds between attempts. Auth errors and HTTP errors are not retried.
+
         :returns: dict with current state values, or {} on failure
         """
-        try:
-            info = self.get_info()
-            state = info["state"]
-            return {
-                "on": state["on"]["value"],
-                "hue": state["hue"]["value"],
-                "sat": state["sat"]["value"],
-                "brightness": state["brightness"]["value"],
-                "ct": state["ct"]["value"],
-                "colorMode": state["colorMode"],
-            }
-        except NanoleafAuthError as exc:
-            logger.warning("get_full_state: auth error (%s)", exc)
-            return {}
-        except NanoleafError:
-            return {}
-        except (KeyError, ValueError) as exc:
-            logger.warning("get_full_state: unexpected API response shape: %s", exc)
-            return {}
+        for attempt in range(retries + 1):
+            try:
+                info = self.get_info()
+                state = info["state"]
+                return {
+                    "on": state["on"]["value"],
+                    "hue": state["hue"]["value"],
+                    "sat": state["sat"]["value"],
+                    "brightness": state["brightness"]["value"],
+                    "ct": state["ct"]["value"],
+                    "colorMode": state["colorMode"],
+                }
+            except NanoleafAuthError as exc:
+                logger.warning("get_full_state: auth error (%s)", exc)
+                return {}
+            except NanoleafConnectionError:
+                if attempt < retries:
+                    logger.debug(
+                        "get_full_state: attempt %d/%d failed, retrying in %.0fs",
+                        attempt + 1, retries + 1, retry_delay,
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    return {}
+            except NanoleafError:
+                return {}
+            except (KeyError, ValueError) as exc:
+                logger.warning("get_full_state: unexpected API response shape: %s", exc)
+                return {}
+        return {}
 
     # ------------------------------------------------------------------
     # Power
