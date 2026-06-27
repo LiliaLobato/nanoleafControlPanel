@@ -103,8 +103,12 @@ class Config:
     # --- Current guard / sparkle scatter (Phase 1 v2) ---
     current_guard_enabled: bool = True
     current_guard_threshold: int = 80
-    sparkle_speed: int = 3
     sparkle_floor_pct: int = 70
+    # Per-panel fade-in in 100 ms units (30 = 3 s). Applies only on color
+    # change/activation. Must stay well below the cron tick interval (1200 = 2 min).
+    sparkle_transtime: int = 30
+    # Cron ticks between random dim-panel reshuffles (wear levelling). 10 = 20 min.
+    sparkle_rotation_interval: int = 10
 
 
 # ---------------------------------------------------------------------------

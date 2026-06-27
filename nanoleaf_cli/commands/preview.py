@@ -5,7 +5,7 @@ import time as _time
 from controller.config import load_config, load_profiles
 from controller.state import get_preview_lock, load_state
 from nanoleaf.nanoleafLight import NanoleafLight
-from nanoleaf.sparkle import build_sparkle_effect
+from nanoleaf.sparkle import build_sparkle_effect, calculate_dim_count, even_spaced
 from nanoleaf_cli._lamp_factory import make_light
 from nanoleaf_cli._formatting import print_error
 from nanoleaf_cli._validation import validate_profile_name, validate_rgb_str
@@ -77,7 +77,7 @@ def run_sparkle(args, now=None):
     """Preview the sparkle scatter effect on the lamp for --duration seconds, then revert.
 
     Uses the current effective profile from state if no HSB overrides are given.
-    Reads sparkle_speed and sparkle_floor_pct from config unless overridden by args.
+    Reads sparkle_transtime and sparkle_floor_pct from config unless overridden by args.
     """
     config = load_config()
 
@@ -93,7 +93,6 @@ def run_sparkle(args, now=None):
     sat        = int(sat)        if sat        is not None else last_profile.get("saturation",  70)
     brightness = int(brightness) if brightness is not None else last_profile.get("brightness",  config.current_guard_threshold)
 
-    speed = int(args.speed) if getattr(args, "speed", None) is not None else config.sparkle_speed
     floor = int(args.floor) if getattr(args, "floor", None) is not None else config.sparkle_floor_pct
     duration = int(getattr(args, "duration", 10) or 10)
 
@@ -120,11 +119,19 @@ def run_sparkle(args, now=None):
 
     from controller.config import LightProfile
     profile = LightProfile(mode="hsb", hue=hue, saturation=sat, brightness=brightness)
-    effect = build_sparkle_effect(panel_ids, profile, floor, speed)
+
+    sorted_ids = sorted(panel_ids)
+    k = calculate_dim_count(profile, floor, config.current_guard_threshold, len(sorted_ids))
+    if k <= 0:
+        # Warm colour within budget — no panels would dim in the controller.
+        # Dim half for a visible preview so the scatter pattern is observable.
+        k = len(sorted_ids) // 2
+    dim_ids = even_spaced(sorted_ids, k)
+    effect = build_sparkle_effect(sorted_ids, dim_ids, profile, floor, config.sparkle_transtime)
 
     print(
         f"  Sparkle preview: hue={hue} sat={sat} bri={brightness} "
-        f"speed={speed}/10 floor={floor}% panels={len(panel_ids)}"
+        f"transtime={config.sparkle_transtime} floor={floor}% panels={len(sorted_ids)} dimmed={len(dim_ids)}"
     )
 
     def _apply(l):

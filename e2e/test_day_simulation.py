@@ -59,15 +59,33 @@ class MockLamp:
     spurious manual-override signals.
     """
 
-    def __init__(self):
+    # Default 51-panel layout (ids 1-52 minus the Rhythm module at id 6),
+    # matching the real lamp so even-spacing/K-count behave realistically.
+    DEFAULT_PANEL_IDS = [i for i in range(1, 53) if i != 6]
+
+    def __init__(self, panel_ids=None):
         self._state = {
             "on": False, "hue": 0, "sat": 0, "brightness": 0,
             "ct": 4000, "colorMode": "hs",
         }
         self.calls: list = []
+        self.panel_ids = list(panel_ids) if panel_ids is not None else list(self.DEFAULT_PANEL_IDS)
 
     def get_full_state(self) -> dict:
         return dict(self._state)
+
+    def get_panel_ids(self) -> list:
+        self.calls.append(("get_panel_ids",))
+        return list(self.panel_ids)
+
+    def write_effect(self, effect_data: dict) -> bool:
+        self.calls.append(("write_effect", effect_data))
+        # A live static effect reports colorMode "effect"; GET /state then returns
+        # DEFAULT color fields, not the rendered colors (firmware behaviour).
+        self._state.update({
+            "colorMode": "effect", "hue": 0, "sat": 0, "ct": 1200, "brightness": 20,
+        })
+        return True
 
     def set_hsb(self, hue: int, sat: int, bri: int, on: bool | None = None) -> bool:
         self.calls.append(("set_hsb", hue, sat, bri, on))
@@ -237,6 +255,16 @@ class TestDaySimulation:
         expected = _OFF_PHASES | _ON_PHASES
         assert phases_seen >= expected, \
             f"Missing phases after full day: {expected - phases_seen}"
+
+    def test_sparkle_never_fires_under_default_profiles(self, monkeypatch, mock_lamp, fixed_weather):
+        """No default profile reaches brightness 80, so the current guard never
+        writes a sparkle effect across a full day."""
+        ctrl = _wire(monkeypatch, mock_lamp, fixed_weather)
+        for tick in _ticks(0, 0, 23, 58):
+            ctrl.run(now=tick)
+        effect_calls = [c for c in mock_lamp.calls if c[0] == "write_effect"]
+        assert not effect_calls, \
+            f"write_effect called {len(effect_calls)}x under default profiles (max bri 55 < 80)"
 
     def test_phase_transitions_correct_via_run(self, monkeypatch, mock_lamp, fixed_weather):
         """Phase and power at 7 timestamps verified end-to-end through run() + last_applied.

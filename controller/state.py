@@ -55,6 +55,10 @@ def _empty_state() -> dict:
         },
         "last_error": None,
         "panel_ids": None,
+        "sparkle_dim_panels": None,
+        "sparkle_last_rotation_at": None,
+        "sparkle_effect_hash": None,
+        "controller_last_tick_at": None,
     }
 
 
@@ -90,6 +94,10 @@ def load_state() -> dict:
 
     state.setdefault("party_mode", {"active": False})
     state.setdefault("panel_ids", None)
+    state.setdefault("sparkle_dim_panels", None)
+    state.setdefault("sparkle_last_rotation_at", None)
+    state.setdefault("sparkle_effect_hash", None)
+    state.setdefault("controller_last_tick_at", None)
     return state
 
 
@@ -284,6 +292,11 @@ def detect_manual_override(
       "manual_on"          — user turned ON when we expected OFF
       "manual_off"         — user turned OFF when we expected ON
       "late_night_trigger" — user turned ON after hard cutoff (off phase)
+      "manual_recolor"     — lamp was running our sparkle effect and the user
+                             recoloured it via the app (colorMode left "effect"
+                             while power stayed ON). The guard re-evaluates this
+                             tick; GET /state reports defaults in effect mode, so
+                             detection keys on colorMode, never hue/sat.
     """
     if not last_applied:
         return "none"
@@ -306,6 +319,12 @@ def detect_manual_override(
     expected_on = last_applied.get("power", False)
 
     if actual_on == expected_on:
+        # Power unchanged. If our last tick wrote a sparkle effect and the lamp
+        # has since left effect mode (still on), the user recoloured it manually.
+        if expected_on and last_applied.get("effect_active"):
+            color_mode = light_state.get("colorMode")
+            if color_mode is not None and color_mode != "effect":
+                return "manual_recolor"
         return "none"
 
     if actual_on and not expected_on:

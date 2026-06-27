@@ -56,3 +56,13 @@ def partly_cloudy():
 @pytest.fixture
 def thunderstorm():
     return _make_instance("thunderstorm.json")
+
+
+@pytest.fixture
+def panel_ids_51():
+    """Real-shaped 51-panel layout: ids 1-52 minus the Rhythm module (id 6).
+
+    Matches the production lamp so K-count and even-spacing exercise realistic
+    ordering rather than a tiny stub.
+    """
+    return [i for i in range(1, 53) if i != 6]

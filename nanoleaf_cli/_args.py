@@ -33,7 +33,6 @@ from nanoleaf_cli._validation import (
     validate_hue as _validate_hue,
     validate_saturation as _validate_saturation,
     validate_brightness as _validate_brightness,
-    validate_sparkle_speed as _validate_sparkle_speed,
     validate_sparkle_floor as _validate_sparkle_floor,
 )
 from nanoleaf_cli.commands.status import run as status_run
@@ -173,7 +172,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_prev_sparkle.add_argument("--hue", type=_validate_hue, metavar="H", help="hue 0-359 (default: from last_applied)")
     p_prev_sparkle.add_argument("--sat", type=_validate_saturation, metavar="S", help="saturation 0-100")
     p_prev_sparkle.add_argument("--brightness", type=_validate_brightness, metavar="B", help="brightness 0-100")
-    p_prev_sparkle.add_argument("--speed", type=_validate_sparkle_speed, metavar="N", help="drift speed 1-10 (default: config)")
     p_prev_sparkle.add_argument("--floor", type=_validate_sparkle_floor, metavar="N", help="floor brightness %% 0-100 (default: config)")
     p_prev_sparkle.add_argument("--duration", type=int, default=10, metavar="SEC", help="seconds to hold preview (default: 10)")
     p_prev_sparkle.set_defaults(func=preview_sparkle)
@@ -201,10 +199,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_party.add_argument(
         "--fade-duration", type=int, metavar="MIN", dest="fade_duration",
         help="fade window in minutes (implies --fade true)",
-    )
-    p_party.add_argument(
-        "--speed", type=_validate_sparkle_speed, metavar="N",
-        help="sparkle drift speed 1 (slow candlelight) – 10 (fast); overrides config for this session",
     )
     p_party.add_argument(
         "--floor", type=_validate_sparkle_floor, metavar="N",

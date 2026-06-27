@@ -2,25 +2,29 @@
 
 Sparkle scatter effect for the Nanoleaf current guard (Phase 1 v2).
 
-All panels share the same hue and saturation as the target profile.
-Panels alternate between ceiling brightness (even sorted index) and floor
-brightness (odd sorted index), creating a static scattered-brightness pattern
-that prevents simultaneous full-current draw across all 51 panels.
+All panels share the same hue and saturation as the target profile. A
+power-budget calculation (``calculate_dim_count``) decides how many panels (K)
+must drop to a floor brightness so the lamp's total current draw stays within
+the PSU budget; the remaining (N − K) stay at the ceiling (target) brightness.
+The result is a single ``animType:"static"`` payload written in one PUT /effects.
 
-Animated multi-frame payloads (2–6 frames × 51 panels) lock up the Nanoleaf's
-embedded HTTP server for ~2 minutes then crash the device. A single frame per
-panel (~350 tokens, ~1.5 KB) is the maximum this device can handle.
+Why static, not custom: animated multi-frame ``animType:"custom"`` payloads lock
+up the Nanoleaf firmware (5.3.2) at high panel counts. ``animType:"static"`` uses
+a different firmware code path — it sets panel colors once and stops — and is
+stable for all 51 panels. Each panel carries a single frame with a fade-in
+``transTime`` (config ``sparkle_transtime``); the fade only shows on color change.
+
+Dim-panel selection is two-mode: deterministic even-spacing while K changes
+(brightness ramps, no visible snap) and a random reshuffle every
+``sparkle_rotation_interval`` ticks for wear levelling.
 """
 
 import colorsys
+import math
+import random
 
 from controller.config import LightProfile
-from nanoleaf.effects import speed_to_transtime
-
-_NUM_FRAMES = 1  # static: 1 frame per panel
-# Animated payloads (2+ frames × 51 panels) crash the Nanoleaf firmware.
-# Even/odd sorted_index alternation gives visible brightness variation
-# and achieves the current-guard goal without animation.
+from controller.dateTime import parse_iso
 
 
 def hsb_to_rgb(hue: int, sat: int, brightness: int) -> tuple[int, int, int]:
@@ -29,84 +33,185 @@ def hsb_to_rgb(hue: int, sat: int, brightness: int) -> tuple[int, int, int]:
     return round(r * 255), round(g * 255), round(b * 255)
 
 
-def _brightness_sequence(brightness: int, floor_pct: int, num_frames: int) -> list[int]:
-    """Return a smooth triangle-wave brightness sequence.
+def power_fraction(rgb: tuple[int, int, int]) -> float:
+    """Per-panel current draw as a fraction 0.0-1.0, modelled as (R+G+B)/765.
 
-    Ramps from floor up to ceiling then back down over num_frames steps.
-    floor = brightness * floor_pct / 100, ceiling = brightness.
-
-    Example (brightness=80, floor_pct=70, num_frames=6):
-        floor=56, ceiling=80 → [56, 64, 72, 80, 72, 64]
+    PWM per channel means average current is proportional to channel value, so
+    warm colours (low green/blue) draw far less than white at the same brightness.
     """
-    if num_frames <= 1:
-        return [brightness]
-    floor = round(brightness * floor_pct / 100)
-    ceiling = brightness
-    half = num_frames // 2
-    sequence = []
-    for i in range(num_frames):
-        t = i / half if i <= half else (num_frames - i) / max(1, num_frames - half)
-        val = round(floor + (ceiling - floor) * t)
-        sequence.append(max(0, min(100, val)))
-    return sequence
+    return sum(rgb) / 765.0
+
+
+def calculate_dim_count(
+    profile: LightProfile,
+    floor_pct: int,
+    threshold: int,
+    num_panels: int,
+) -> int:
+    """Return K — how many panels must drop to floor brightness for the guard.
+
+    Power model (all values are per-panel current fractions 0.0-1.0):
+        power        = (R+G+B)/765 at the ceiling (target) colour
+        floor_power  = power * floor_pct/100
+        safe_total   = num_panels * (threshold-5)/100   (budget = all panels at cap)
+        actual_total = num_panels * power
+        K            = ceil((actual_total - safe_total) / (power - floor_power))
+
+    Returns 0 (no sparkle needed — caller falls back to set_hsb) when:
+      - num_panels <= 0
+      - the colour is already within budget (actual_total <= safe_total) — common
+        for warm sunrise/sunset colours
+      - floor_pct >= 100 (floor == ceiling, nothing to dim — avoids div-by-zero)
+      - power <= 0 (black)
+    K is clamped to num_panels.
+    """
+    if num_panels <= 0 or floor_pct >= 100:
+        return 0
+
+    rgb = hsb_to_rgb(profile.hue, profile.saturation, profile.brightness)
+    power = power_fraction(rgb)
+    if power <= 0:
+        return 0
+
+    safe_total = num_panels * (threshold - 5) / 100.0
+    actual_total = num_panels * power
+    if actual_total <= safe_total:
+        return 0
+
+    floor_power = power * floor_pct / 100.0
+    denom = power - floor_power
+    if denom <= 0:
+        return 0
+
+    k = math.ceil((actual_total - safe_total) / denom)
+    return max(0, min(k, num_panels))
+
+
+def even_spaced(sorted_ids: list[int], k: int) -> list[int]:
+    """Pick k panels spread evenly across sorted_ids (deterministic, no RNG).
+
+    Guards step==0 (k > len) and short slices so the result always has exactly
+    min(k, len) ids.
+    """
+    n = len(sorted_ids)
+    k = max(0, min(k, n))
+    if k == 0:
+        return []
+    step = max(1, n // k)
+    selection = sorted_ids[::step][:k]
+    if len(selection) < k:                       # step too large near the tail
+        selection = sorted_ids[:k]
+    return selection
+
+
+def select_dim_panels(
+    state: dict,
+    sorted_ids: list[int],
+    k: int,
+    now,
+    config,
+) -> list[int]:
+    """Choose which k panels render at floor brightness; mutates state.
+
+    Two modes:
+      - K changed (brightness ramp) → deterministic even-spacing, no reshuffle
+        (prevents a visible snap when different panels would otherwise be picked
+        every tick). Resets the rotation clock.
+      - K unchanged → reuse the stored selection until sparkle_rotation_interval
+        cron ticks have elapsed, then random.sample for wear levelling.
+
+    Stores ``sparkle_dim_panels`` and ``sparkle_last_rotation_at`` in state.
+    """
+    n = len(sorted_ids)
+    k = max(0, min(k, n))
+    if k == 0:
+        state["sparkle_dim_panels"] = []
+        return []
+
+    stored = [p for p in (state.get("sparkle_dim_panels") or []) if p in sorted_ids]
+
+    if len(stored) != k:
+        selection = even_spaced(sorted_ids, k)
+        state["sparkle_dim_panels"] = selection
+        state["sparkle_last_rotation_at"] = now.isoformat()
+        return selection
+
+    rotate = True
+    last_rotation_raw = state.get("sparkle_last_rotation_at")
+    if last_rotation_raw:
+        try:
+            ticks_since = (now - parse_iso(last_rotation_raw)).total_seconds() / (
+                config.cron_interval_minutes * 60
+            )
+            rotate = ticks_since >= config.sparkle_rotation_interval
+        except (ValueError, TypeError):
+            rotate = True
+
+    if rotate:
+        selection = random.sample(sorted_ids, k)
+        state["sparkle_dim_panels"] = selection
+        state["sparkle_last_rotation_at"] = now.isoformat()
+        return selection
+
+    return stored
 
 
 def build_sparkle_animdata(
     panel_ids: list[int],
+    dim_ids: list[int],
     hue: int,
     sat: int,
     brightness: int,
     floor_pct: int,
-    speed: int,
+    transtime: int,
 ) -> str:
-    """Build the Nanoleaf animData string for the sparkle scatter effect.
+    """Build the Nanoleaf animData string for animType:"static".
 
-    Format per panel: <panelId> <numFrames> <R> <G> <B> <W> <transTime>
-    Full string:      <numPanels> <panel1_data> <panel2_data> ...
+    Format:  <numPanels> <panel1_block> <panel2_block> ...
+    Block:   <panelId> 1 <R> <G> <B> 0 <transTime>   (1 frame, W=0)
 
-    W (white channel) is always 0 for coloured panels.
-    Even sorted_index → ceiling brightness; odd → floor brightness.
-
-    Returns a single space-separated string with no newlines.
+    Panels in dim_ids render floor RGB (brightness*floor_pct/100); the rest
+    render the ceiling RGB at the target brightness. Returns a single
+    space-separated string with no newlines.
     """
-    trans = speed_to_transtime(speed)
     floor_bri = round(brightness * floor_pct / 100)
-    ceiling_bri = brightness
+    ceil_rgb = hsb_to_rgb(hue, sat, brightness)
+    floor_rgb = hsb_to_rgb(hue, sat, floor_bri)
+    dim_set = set(dim_ids)
     sorted_ids = sorted(panel_ids)
 
     tokens: list[str] = [str(len(sorted_ids))]
-    for sorted_index, pid in enumerate(sorted_ids):
-        bri = ceiling_bri if sorted_index % 2 == 0 else floor_bri
-        r, g, b = hsb_to_rgb(hue, sat, bri)
-        tokens.append(str(pid))
-        tokens.append(str(_NUM_FRAMES))
-        tokens += [str(r), str(g), str(b), "0", str(trans)]
-
+    for pid in sorted_ids:
+        r, g, b = floor_rgb if pid in dim_set else ceil_rgb
+        tokens += [str(pid), "1", str(r), str(g), str(b), "0", str(transtime)]
     return " ".join(tokens)
 
 
 def build_sparkle_effect(
     panel_ids: list[int],
+    dim_ids: list[int],
     profile: LightProfile,
     floor_pct: int,
-    speed: int,
+    transtime: int,
 ) -> dict:
-    """Return the full write_effect payload dict for the sparkle scatter effect.
+    """Return the full write_effect payload dict for the static sparkle effect.
 
-    Uses command='display' (volatile — runs immediately, no NVRAM write).
-    animType='custom' with raw animData. Single frame per panel = static.
+    Uses command='display' (volatile — runs immediately, no NVRAM write) and
+    animType='static' (firmware-stable for all 51 panels). version '2.0' is
+    required by firmware 5.3.2 or the effect is silently ignored.
     """
     return {
         "command": "display",
         "version": "2.0",
-        "animType": "custom",
+        "animType": "static",
         "animData": build_sparkle_animdata(
             panel_ids,
+            dim_ids,
             profile.hue,
             profile.saturation,
             profile.brightness,
             floor_pct,
-            speed,
+            transtime,
         ),
         "loop": False,
         "palette": [],

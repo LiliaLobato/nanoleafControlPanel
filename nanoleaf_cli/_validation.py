@@ -94,7 +94,7 @@ def validate_bool(v: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected true/false/yes/no/1/0, got {v!r}")
 
 
-validate_sparkle_speed = _int_range(1, 10, "sparkle_speed")
+validate_sparkle_transtime = _int_range(0, 200, "sparkle_transtime")
 validate_sparkle_floor = _int_range(0, 100, "sparkle_floor_pct")
 
 
@@ -195,8 +195,9 @@ _CONFIG_FIELD_VALIDATORS: dict[str, Callable[[str], Any]] = {
     # Current guard / sparkle (Phase 1 v2)
     "current_guard_enabled":      validate_bool,
     "current_guard_threshold":    _int_range(0, 100, "current_guard_threshold"),
-    "sparkle_speed":              _int_range(1, 10, "sparkle_speed"),
     "sparkle_floor_pct":          _int_range(0, 100, "sparkle_floor_pct"),
+    "sparkle_transtime":          _int_range(0, 200, "sparkle_transtime"),
+    "sparkle_rotation_interval":  validate_positive_int,
 }
 
 

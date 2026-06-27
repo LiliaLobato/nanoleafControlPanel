@@ -80,14 +80,12 @@ def _resolve_party_profile(args, default_party: LightProfile) -> LightProfile:
 
 
 def _resolve_sparkle_override(args) -> dict:
-    """Build sparkle_override dict from --speed/--floor args.
+    """Build sparkle_override dict from the --floor arg.
 
-    Keys are individually optional — a missing key means "fall back to
-    config value at runtime". Returns {} if neither flag was provided.
+    Returns {"floor_pct": N} if --floor was given, else {} (fall back to config
+    sparkle_floor_pct at runtime).
     """
     override = {}
-    if getattr(args, "speed", None) is not None:
-        override["speed"] = int(args.speed)
     if getattr(args, "floor", None) is not None:
         override["floor_pct"] = int(args.floor)
     return override
@@ -118,9 +116,4 @@ def _start(args, now=None):
     save_state(state)
     confirm_party(party_profile, ends_at, fade_minutes if fade_minutes > 0 else None)
     if sparkle_override:
-        parts = []
-        if "speed" in sparkle_override:
-            parts.append(f"speed={sparkle_override['speed']}/10")
-        if "floor_pct" in sparkle_override:
-            parts.append(f"floor={sparkle_override['floor_pct']}%")
-        print(f"  Sparkle override: {', '.join(parts)}")
+        print(f"  Sparkle override: floor={sparkle_override['floor_pct']}%")
