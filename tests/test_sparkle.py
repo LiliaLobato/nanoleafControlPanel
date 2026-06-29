@@ -242,8 +242,12 @@ class _MockLamp:
         self._write_ok = write_ok
         self._write_raises = write_raises
 
-    def get_full_state(self):
-        return dict(self._state)
+    def get_full_state(self, retries=2, retry_delay=10.0, with_panels=False):
+        s = dict(self._state)
+        if with_panels:
+            # Mirrors the real lamp: a missing/unreachable layout yields [].
+            s["panel_ids"] = [] if self._panel_ids_raises else list(self._panel_ids)
+        return s
 
     def get_panel_ids(self):
         self.calls.append(("get_panel_ids",))
@@ -380,14 +384,16 @@ def test_guard_disabled_no_effect(iso_state, monkeypatch):
     assert "set_hsb" in lamp.names()
 
 
-def test_panel_ids_refetched_each_tick_cache_stable(iso_state, monkeypatch):
+def test_sparkle_path_makes_no_separate_get_panel_ids_call(iso_state, monkeypatch):
     lamp = _MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
     ctrl.run(now=now + timedelta(minutes=2))
-    # Refetched every sparkle tick to detect layout changes; cache stays stable.
-    assert lamp.names().count("get_panel_ids") == 2
+    # Panels come from get_full_state(with_panels=True) — the run() path must make
+    # ZERO separate get_panel_ids device GETs (it fires on every high-consumption
+    # tick, so a second GET per tick would be unacceptable).
+    assert lamp.names().count("get_panel_ids") == 0
     assert load_state()["panel_ids"] == PANELS_51
 
 

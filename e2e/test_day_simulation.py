@@ -71,8 +71,11 @@ class MockLamp:
         self.calls: list = []
         self.panel_ids = list(panel_ids) if panel_ids is not None else list(self.DEFAULT_PANEL_IDS)
 
-    def get_full_state(self) -> dict:
-        return dict(self._state)
+    def get_full_state(self, retries=2, retry_delay=10.0, with_panels=False) -> dict:
+        s = dict(self._state)
+        if with_panels:
+            s["panel_ids"] = list(self.panel_ids)
+        return s
 
     def get_panel_ids(self) -> list:
         self.calls.append(("get_panel_ids",))

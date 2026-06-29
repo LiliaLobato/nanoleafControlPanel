@@ -123,11 +123,16 @@ class NanoleafLight:
         response = self._request("GET", "")
         return json.loads(response.text)
 
-    def get_full_state(self, retries: int = 2, retry_delay: float = 10.0) -> dict[str, Any]:
+    def get_full_state(self, retries: int = 2, retry_delay: float = 10.0,
+                       with_panels: bool = False) -> dict[str, Any]:
         """Return the lamp's current state using a single round-trip.
 
         Extracts the 'state' subfield from get_info() and returns a flat dict:
         {on, hue, sat, brightness, ct, colorMode}
+
+        When `with_panels` is True, also include 'panel_ids' (sorted display-panel
+        IDs from the SAME get_info() response — no extra device GET). A missing or
+        malformed panelLayout yields panel_ids=[] without failing the state read.
 
         On NanoleafConnectionError, retries up to `retries` times with `retry_delay`
         seconds between attempts. Auth errors and HTTP errors are not retried.
@@ -138,7 +143,7 @@ class NanoleafLight:
             try:
                 info = self.get_info()
                 state = info["state"]
-                return {
+                result = {
                     "on": state["on"]["value"],
                     "hue": state["hue"]["value"],
                     "sat": state["sat"]["value"],
@@ -146,6 +151,12 @@ class NanoleafLight:
                     "ct": state["ct"]["value"],
                     "colorMode": state["colorMode"],
                 }
+                if with_panels:
+                    try:
+                        result["panel_ids"] = self._panel_ids_from_info(info)
+                    except (KeyError, TypeError):
+                        result["panel_ids"] = []
+                return result
             except NanoleafAuthError as exc:
                 logger.warning("get_full_state: auth error (%s)", exc)
                 return {}
@@ -300,7 +311,15 @@ class NanoleafLight:
         :raises NanoleafRequestError: on HTTP error
         :raises KeyError: if the response shape is unexpected
         """
-        info = self.get_info()
+        return self._panel_ids_from_info(self.get_info())
+
+    @staticmethod
+    def _panel_ids_from_info(info: dict) -> list[int]:
+        """Sorted display-panel IDs from a get_info() response.
+
+        Excludes shapeType 1 (Rhythm controller module) — it is not a display
+        panel and must not appear in animData payloads.
+        """
         position_data = info["panelLayout"]["layout"]["positionData"]
         return sorted(
             p["panelId"] for p in position_data

@@ -86,7 +86,9 @@ def run(args, now=None):
     print("Lamp:")
     if ip and token:
         try:
-            lamp_state = NanoleafLight("nanoleaf", ip, token).get_full_state()
+            # retries=0: interactive CLI must fail fast, not block ~20s on the
+            # controller's get_full_state retry budget when the lamp is unreachable.
+            lamp_state = NanoleafLight("nanoleaf", ip, token).get_full_state(retries=0)
         except Exception:
             lamp_state = None
         if lamp_state:

@@ -141,7 +141,7 @@ def run(now: Optional[datetime] = None) -> None:
         ip,
         token,
     )
-    light_state = light.get_full_state()
+    light_state = light.get_full_state(with_panels=True)
     if not light_state:
         handle_lamp_failure(
             state, now, config,
@@ -236,24 +236,24 @@ def run(now: Optional[datetime] = None) -> None:
     )
 
     if guard_wants_fire and should_be_on and effective_color.mode == "hsb":
-        # Fetch the live panel set and reconcile with the cache. Sparkle fires
-        # rarely (only at brightness >= threshold), so the extra GET is cheap, and
-        # it keeps us correct if the panel layout changed (tiles added/removed).
+        # Panels come from the SAME get_info() as the state read above (via
+        # get_full_state(with_panels=True)) — zero extra device GETs per tick, which
+        # matters because the guard fires on every high-consumption tick. Reconcile
+        # the live set with the cache; on a layout change clear the dim selection so
+        # select_dim_panels re-derives it deterministically (even-spacing, not a
+        # random reshuffle — no flicker).
         cached_ids = state.get("panel_ids") or []
-        try:
-            panel_ids = light.get_panel_ids()
-        except Exception as exc:
-            panel_ids = cached_ids
-            logger.warning("current_guard: get_panel_ids failed (%s) — using cached set", exc)
-        if panel_ids and set(panel_ids) != set(cached_ids):
+        live_ids = light_state.get("panel_ids") or []
+        panel_ids = live_ids or cached_ids
+        if live_ids and set(live_ids) != set(cached_ids):
             if cached_ids:
                 logger.info(
                     "current_guard: panel set changed (%d → %d) — resetting dim selection",
-                    len(cached_ids), len(panel_ids),
+                    len(cached_ids), len(live_ids),
                 )
                 state["sparkle_dim_panels"] = []
                 state["sparkle_last_rotation_at"] = None
-            state["panel_ids"] = panel_ids
+            state["panel_ids"] = live_ids
 
         sparkle_override = (state.get("party_mode") or {}).get("sparkle_override", {})
         floor_pct = sparkle_override.get("floor_pct", config.sparkle_floor_pct)
