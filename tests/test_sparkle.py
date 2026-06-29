@@ -232,13 +232,15 @@ def test_build_sparkle_effect_payload():
 class _MockLamp:
     DEFAULT_PANEL_IDS = list(PANELS_51)
 
-    def __init__(self, panel_ids=None, panel_ids_raises=False, write_ok=True):
+    def __init__(self, panel_ids=None, panel_ids_raises=False, write_ok=True,
+                 write_raises=None):
         self._state = {"on": False, "hue": 0, "sat": 0, "brightness": 0,
                        "ct": 4000, "colorMode": "hs"}
         self.calls = []
         self._panel_ids = list(self.DEFAULT_PANEL_IDS if panel_ids is None else panel_ids)
         self._panel_ids_raises = panel_ids_raises
         self._write_ok = write_ok
+        self._write_raises = write_raises
 
     def get_full_state(self):
         return dict(self._state)
@@ -251,6 +253,8 @@ class _MockLamp:
 
     def write_effect(self, effect):
         self.calls.append(("write_effect", effect))
+        if self._write_raises is not None:
+            raise self._write_raises
         if self._write_ok:
             self._state.update({"colorMode": "effect", "hue": 0, "sat": 0,
                                 "ct": 1200, "brightness": 20})
@@ -376,14 +380,28 @@ def test_guard_disabled_no_effect(iso_state, monkeypatch):
     assert "set_hsb" in lamp.names()
 
 
-def test_panel_ids_cached_after_first_tick(iso_state, monkeypatch):
+def test_panel_ids_refetched_each_tick_cache_stable(iso_state, monkeypatch):
     lamp = _MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
     ctrl.run(now=now + timedelta(minutes=2))
-    assert lamp.names().count("get_panel_ids") == 1     # cached after first
+    # Refetched every sparkle tick to detect layout changes; cache stays stable.
+    assert lamp.names().count("get_panel_ids") == 2
     assert load_state()["panel_ids"] == PANELS_51
+
+
+def test_panel_set_change_updates_cache(iso_state, monkeypatch):
+    lamp = _MockLamp()
+    ctrl = _wire(monkeypatch, lamp)
+    now = _seed_party(hue=0, sat=0, brightness=90)
+    ctrl.run(now=now)
+    assert load_state()["panel_ids"] == PANELS_51
+    lamp._panel_ids = PANELS_51[:-1]                     # a tile removed
+    ctrl.run(now=now + timedelta(minutes=2))
+    st = load_state()
+    assert st["panel_ids"] == PANELS_51[:-1]             # cache refreshed
+    assert set(st["sparkle_dim_panels"]).issubset(set(PANELS_51[:-1]))   # no stale IDs
 
 
 def test_no_panel_ids_falls_back_to_cap(iso_state, monkeypatch):
@@ -395,14 +413,39 @@ def test_no_panel_ids_falls_back_to_cap(iso_state, monkeypatch):
     assert load_state()["last_applied"]["current_guard_active"] == "brightness_cap"
 
 
-def test_write_effect_failure_triggers_backoff(iso_state, monkeypatch):
+def test_write_effect_4xx_degrades_to_cap(iso_state, monkeypatch):
+    # write_effect returns False = lamp rejected the payload (4xx) → degrade to a
+    # capped solid colour, NO backoff.
     lamp = _MockLamp(write_ok=False)
+    ctrl = _wire(monkeypatch, lamp)
+    now = _seed_party(hue=0, sat=0, brightness=90)
+    ctrl.run(now=now)
+    st = load_state()
+    assert st["lamp_failure_state"]["consecutive_failures"] == 0
+    assert st["last_applied"]["current_guard_active"] == "brightness_cap"
+    assert "set_hsb" in lamp.names()
+
+
+def test_write_effect_connection_error_triggers_backoff(iso_state, monkeypatch):
+    # A transient connection failure re-raises → handle_lamp_failure (backoff).
+    from nanoleaf.nanoleafLight import NanoleafConnectionError
+    lamp = _MockLamp(write_raises=NanoleafConnectionError("timeout"))
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
     st = load_state()
     assert st["lamp_failure_state"]["consecutive_failures"] == 1
     assert st["lamp_failure_state"]["next_retry_at"] is not None
+
+
+def test_floor_pct_100_caps_no_effect(iso_state, monkeypatch):
+    # floor_pct=100 leaves nothing to dim → cap brightness, no sparkle.
+    lamp = _MockLamp()
+    ctrl = _wire(monkeypatch, lamp)
+    now = _seed_party(hue=0, sat=0, brightness=90, floor=100)
+    ctrl.run(now=now)
+    assert "write_effect" not in lamp.names()
+    assert load_state()["last_applied"]["current_guard_active"] == "brightness_cap"
 
 
 def test_skip_guard_unchanged_effect(iso_state, monkeypatch):
@@ -431,6 +474,25 @@ def test_controller_last_tick_at_written(iso_state, monkeypatch):
     now = _seed_party(hue=20, sat=70, brightness=40)
     ctrl.run(now=now)
     assert load_state()["controller_last_tick_at"] == now.isoformat()
+
+
+def test_controller_last_tick_at_written_during_backoff(iso_state, monkeypatch):
+    # Even when the lamp is in backoff (early return), the tick timestamp is set.
+    lamp = _MockLamp()
+    ctrl = _wire(monkeypatch, lamp)
+    now = _seed_party(hue=0, sat=0, brightness=90)
+    st = load_state()
+    st["lamp_failure_state"] = {
+        "consecutive_failures": 2,
+        "last_failure_at": now.isoformat(),
+        "last_failure_type": "NanoleafConnectionError",
+        "next_retry_at": (now + timedelta(minutes=30)).isoformat(),
+    }
+    save_state(st)
+    ctrl.run(now=now)
+    st2 = load_state()
+    assert st2["controller_last_tick_at"] == now.isoformat()
+    assert "write_effect" not in lamp.names()   # backoff → no lamp write
 
 
 # ---------------------------------------------------------------------------

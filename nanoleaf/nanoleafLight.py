@@ -326,11 +326,17 @@ class NanoleafLight:
             self._request("PUT", "/effects", data=json.dumps({"write": effect_data}),
                           timeout=(3, 20))
             return True
+        except NanoleafConnectionError:
+            # Transient network failure (timeout / refused) — re-raise so the
+            # controller backs off and retries on the next tick.
+            raise
         except NanoleafAuthError as exc:
             logger.warning("write_effect: auth error (%s)", exc)
             return False
         except NanoleafError as exc:
-            logger.warning("write_effect: request failed (%s)", exc)
+            # Non-transient (4xx/5xx, e.g. payload rejected) — return False so the
+            # controller degrades to a brightness cap instead of backing off.
+            logger.warning("write_effect: request rejected (%s)", exc)
             return False
 
     def set_color(
