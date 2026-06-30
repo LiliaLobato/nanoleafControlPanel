@@ -42,49 +42,87 @@ def power_fraction(rgb: tuple[int, int, int]) -> float:
     return sum(rgb) / 765.0
 
 
-def calculate_dim_count(
+def calculate_guard_setting(
     profile: LightProfile,
     floor_pct: int,
     threshold: int,
     num_panels: int,
-) -> int:
-    """Return K — how many panels must drop to floor brightness for the guard.
+) -> tuple[int, int, int]:
+    """Return ``(K, floor_brightness, ceiling_brightness)`` for the current guard.
 
-    Power model (all values are per-panel current fractions 0.0-1.0):
-        power        = (R+G+B)/765 at the ceiling (target) colour
-        floor_power  = power * floor_pct/100
-        safe_total   = num_panels * (threshold-5)/100   (budget = all panels at cap)
-        actual_total = num_panels * power
-        K            = ceil((actual_total - safe_total) / (power - floor_power))
+    POWER-BASED — there is no brightness trigger. Every HSB tick we compute the
+    colour's actual per-panel draw and act only when the lamp is over budget:
 
-    Returns 0 (no sparkle needed — caller falls back to set_hsb) when:
-      - num_panels <= 0
-      - the colour is already within budget (actual_total <= safe_total) — common
-        for warm sunrise/sunset colours
-      - floor_pct >= 100 (floor == ceiling, nothing to dim — avoids div-by-zero)
-      - power <= 0 (black)
-    K is clamped to num_panels.
+        p_full       = (R+G+B)/765 at the colour, brightness 100  (draw scales ∝ brightness)
+        safe_total   = num_panels * (threshold-5)/100             (the power budget)
+        power_ceiling= p_full * brightness/100                    (per-panel draw at target)
+
+    ``(0, B, B)`` means within budget → no guard (caller uses set_hsb). Otherwise
+    three escalating responses, always keeping total draw ≤ safe_total:
+
+      1. Dim K panels to the configured ``floor_pct`` (ceiling stays at target B).
+      2. If that floor can't bring it within budget, LOWER THE FLOOR at runtime so
+         (N-K) panels stay at full target brightness and K panels sit just low
+         enough to meet the budget (keeps maximum brightness — the dual lever).
+      3. Last resort (essentially never, e.g. one panel already over budget):
+         cap the ceiling brightness.
+
+    Floor brightness is truncated (``int``) so the rendered draw never rounds
+    above the budgeted value — the budget invariant always holds.
     """
-    if num_panels <= 0 or floor_pct >= 100:
-        return 0
+    n = num_panels
+    b = profile.brightness
+    hue, sat = profile.hue, profile.saturation
+    if n <= 0:
+        return (0, b, b)
 
-    rgb = hsb_to_rgb(profile.hue, profile.saturation, profile.brightness)
-    power = power_fraction(rgb)
-    if power <= 0:
-        return 0
+    # Use ACTUAL rendered power at each brightness (power_fraction of the rounded
+    # RGB), not a linear model — RGB channels are integers 0-255, so the linear
+    # approximation can drift a hair above budget. Computing against the real
+    # rendered values makes the budget invariant hold exactly.
+    power_ceiling = power_fraction(hsb_to_rgb(hue, sat, b))
+    if power_ceiling <= 0:
+        return (0, b, b)
 
-    safe_total = num_panels * (threshold - 5) / 100.0
-    actual_total = num_panels * power
-    if actual_total <= safe_total:
-        return 0
+    safe_total = n * (threshold - 5) / 100.0
+    if n * power_ceiling <= safe_total:
+        return (0, b, b)  # within budget — no guard needed
 
-    floor_power = power * floor_pct / 100.0
-    denom = power - floor_power
-    if denom <= 0:
-        return 0
+    # 1) configured floor_pct, ceiling stays at target brightness
+    ff = min(max(floor_pct, 0), 100) / 100.0
+    floor_bri = int(b * ff)
+    floor_power = power_fraction(hsb_to_rgb(hue, sat, floor_bri))
+    denom = power_ceiling - floor_power
+    if denom > 0:
+        k = math.ceil((n * power_ceiling - safe_total) / denom)
+        if k <= n:
+            return (k, floor_bri, b)
 
-    k = math.ceil((actual_total - safe_total) / denom)
-    return max(0, min(k, num_panels))
+    # 2) configured floor insufficient (or floor_pct>=100) — lower the floor,
+    #    keep the ceiling at target B. Dim the minimum panels so the remaining
+    #    ceiling panels alone fit the budget, then drop those K just low enough.
+    k = min(n, max(1, math.ceil(n - safe_total / power_ceiling)))
+    if k < n:
+        floor_power_needed = max(0.0, (safe_total - (n - k) * power_ceiling) / k)
+        floor_bri = _max_brightness_within_power(hue, sat, floor_power_needed)
+        return (k, floor_bri, b)
+
+    # 3) last resort — even one panel at the ceiling exceeds the budget: cap it.
+    b_cap = _max_brightness_within_power(hue, sat, safe_total / n)
+    return (n, b_cap, b_cap)
+
+
+def _max_brightness_within_power(hue: int, sat: int, target_power: float) -> int:
+    """Highest brightness 0-100 whose rendered per-panel power <= target_power.
+
+    Power is monotonic in brightness, so scan downward and return the first
+    brightness at or under the target — guarantees the rendered draw never
+    exceeds the budgeted value.
+    """
+    for bri in range(100, -1, -1):
+        if power_fraction(hsb_to_rgb(hue, sat, bri)) <= target_power:
+            return bri
+    return 0
 
 
 def even_spaced(sorted_ids: list[int], k: int) -> list[int]:
@@ -98,10 +136,8 @@ def even_spaced(sorted_ids: list[int], k: int) -> list[int]:
     if k == 0:
         return []
     step = max(1, n // k)
-    selection = sorted_ids[::step][:k]
-    if len(selection) < k:                       # step too large near the tail
-        selection = sorted_ids[:k]
-    return selection
+    # step = n//k guarantees sorted_ids[::step] yields >= k elements for k <= n.
+    return sorted_ids[::step][:k]
 
 
 def select_dim_panels(
@@ -161,8 +197,8 @@ def build_sparkle_animdata(
     dim_ids: list[int],
     hue: int,
     sat: int,
-    brightness: int,
-    floor_pct: int,
+    floor_brightness: int,
+    ceiling_brightness: int,
     transtime: int,
 ) -> str:
     """Build the Nanoleaf animData string for animType:"static".
@@ -170,13 +206,13 @@ def build_sparkle_animdata(
     Format:  <numPanels> <panel1_block> <panel2_block> ...
     Block:   <panelId> 1 <R> <G> <B> 0 <transTime>   (1 frame, W=0)
 
-    Panels in dim_ids render floor RGB (brightness*floor_pct/100); the rest
-    render the ceiling RGB at the target brightness. Returns a single
+    Panels in dim_ids render the floor RGB (hue/sat at ``floor_brightness``); the
+    rest render the ceiling RGB (hue/sat at ``ceiling_brightness``). Both are
+    absolute brightnesses chosen by ``calculate_guard_setting``. Returns a single
     space-separated string with no newlines.
     """
-    floor_bri = round(brightness * floor_pct / 100)
-    ceil_rgb = hsb_to_rgb(hue, sat, brightness)
-    floor_rgb = hsb_to_rgb(hue, sat, floor_bri)
+    ceil_rgb = hsb_to_rgb(hue, sat, ceiling_brightness)
+    floor_rgb = hsb_to_rgb(hue, sat, floor_brightness)
     dim_set = set(dim_ids)
     sorted_ids = sorted(panel_ids)
 
@@ -190,12 +226,16 @@ def build_sparkle_animdata(
 def build_sparkle_effect(
     panel_ids: list[int],
     dim_ids: list[int],
-    profile: LightProfile,
-    floor_pct: int,
+    hue: int,
+    sat: int,
+    floor_brightness: int,
+    ceiling_brightness: int,
     transtime: int,
 ) -> dict:
     """Return the full write_effect payload dict for the static sparkle effect.
 
+    Dimmed panels render hue/sat at ``floor_brightness``, the rest at
+    ``ceiling_brightness`` (both absolute, from ``calculate_guard_setting``).
     Uses command='display' (volatile — runs immediately, no NVRAM write) and
     animType='static' (firmware-stable for all 51 panels). version '2.0' is
     required by firmware 5.3.2 or the effect is silently ignored.
@@ -207,10 +247,10 @@ def build_sparkle_effect(
         "animData": build_sparkle_animdata(
             panel_ids,
             dim_ids,
-            profile.hue,
-            profile.saturation,
-            profile.brightness,
-            floor_pct,
+            hue,
+            sat,
+            floor_brightness,
+            ceiling_brightness,
             transtime,
         ),
         "loop": False,

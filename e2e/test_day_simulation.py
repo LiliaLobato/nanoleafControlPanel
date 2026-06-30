@@ -260,14 +260,15 @@ class TestDaySimulation:
             f"Missing phases after full day: {expected - phases_seen}"
 
     def test_sparkle_never_fires_under_default_profiles(self, monkeypatch, mock_lamp, fixed_weather):
-        """No default profile reaches brightness 80, so the current guard never
-        writes a sparkle effect across a full day."""
+        """The guard is power-based: the default profiles are all warm/saturated or
+        low-brightness enough to stay within the per-panel budget, so the current
+        guard never writes a sparkle effect across a full day."""
         ctrl = _wire(monkeypatch, mock_lamp, fixed_weather)
         for tick in _ticks(0, 0, 23, 58):
             ctrl.run(now=tick)
         effect_calls = [c for c in mock_lamp.calls if c[0] == "write_effect"]
         assert not effect_calls, \
-            f"write_effect called {len(effect_calls)}x under default profiles (max bri 55 < 80)"
+            f"write_effect called {len(effect_calls)}x under default profiles (all within power budget)"
 
     def test_phase_transitions_correct_via_run(self, monkeypatch, mock_lamp, fixed_weather):
         """Phase and power at 7 timestamps verified end-to-end through run() + last_applied.
@@ -328,7 +329,7 @@ class TestDaySimulation:
             f"Ramp should end bright (MORNING bri=55), got {brightnesses[-1]}"
 
     def test_evening_ramp_holds_daytime_on_profile(self, monkeypatch, mock_lamp, fixed_weather):
-        """All 30 ticks in evening_ramp: ON with exact DAYTIME_ON values (hue=15, sat=80, bri=33)."""
+        """All 30 ticks in evening_ramp: ON with exact DAYTIME_ON values (hue=15, sat=80, bri=70)."""
         import controller.state as state_mod
         ctrl = _wire(monkeypatch, mock_lamp, fixed_weather)
 
@@ -342,11 +343,11 @@ class TestDaySimulation:
                 f"At {tick.strftime('%H:%M')} hue={p['hue']}, expected 15 (DAYTIME_ON)"
             assert p["saturation"] == 80, \
                 f"At {tick.strftime('%H:%M')} sat={p['saturation']}, expected 80"
-            assert p["brightness"] == 33, \
-                f"At {tick.strftime('%H:%M')} bri={p['brightness']}, expected 33"
+            assert p["brightness"] == 70, \
+                f"At {tick.strftime('%H:%M')} bri={p['brightness']}, expected 70"
 
     def test_night_ramp_brightness_decreases(self, monkeypatch, mock_lamp, fixed_weather):
-        """Brightness ramps down from DAYTIME_ON (33) to NIGHT (20) during 21:00→21:58."""
+        """Brightness ramps down from DAYTIME_ON (70) to NIGHT (50) during 21:00→21:58."""
         ctrl = _wire(monkeypatch, mock_lamp, fixed_weather)
 
         # Turn lamp on via evening_ramp so it's already ON when night_ramp starts.
@@ -357,10 +358,11 @@ class TestDaySimulation:
             ctrl.run(now=tick)
             brightnesses.append(mock_lamp.get_full_state()["brightness"])
 
-        assert brightnesses[0] == 33, \
-            f"Night ramp should start at DAYTIME_ON brightness (33), got {brightnesses[0]}"
-        assert brightnesses[-1] == 20, \
-            f"Night ramp should end at NIGHT brightness (20), got {brightnesses[-1]}"
+        assert brightnesses[0] == 70, \
+            f"Night ramp should start at DAYTIME_ON brightness (70), got {brightnesses[0]}"
+        # 21:58 is just before night_full (22:00), so brightness is ~NIGHT (50) ±1.
+        assert abs(brightnesses[-1] - 50) <= 1, \
+            f"Night ramp should end near NIGHT brightness (50), got {brightnesses[-1]}"
 
         increases = [
             (i, brightnesses[i], brightnesses[i + 1])
@@ -395,8 +397,8 @@ class TestDaySimulation:
                 f"At {tick.strftime('%H:%M')} power should be True during hard_cutoff_ramp"
             brightnesses.append(mock_lamp.get_full_state()["brightness"])
 
-        assert brightnesses[0] == 20, \
-            f"Hard cutoff should start at NIGHT brightness (20), got {brightnesses[0]}"
+        assert brightnesses[0] == 50, \
+            f"Hard cutoff should start at NIGHT brightness (50), got {brightnesses[0]}"
         assert brightnesses[-1] <= 2, \
             f"Hard cutoff should end near 0 brightness, got {brightnesses[-1]}"
 

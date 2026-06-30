@@ -5,7 +5,7 @@ import time as _time
 from controller.config import load_config, load_profiles
 from controller.state import get_preview_lock, load_state
 from nanoleaf.nanoleafLight import NanoleafLight
-from nanoleaf.sparkle import build_sparkle_effect, calculate_dim_count, even_spaced
+from nanoleaf.sparkle import build_sparkle_effect, calculate_guard_setting, even_spaced
 from nanoleaf_cli._lamp_factory import make_light
 from nanoleaf_cli._formatting import print_error
 from nanoleaf_cli._validation import validate_profile_name, validate_rgb_str
@@ -96,12 +96,9 @@ def run_sparkle(args, now=None):
     floor = int(args.floor) if getattr(args, "floor", None) is not None else config.sparkle_floor_pct
     duration = int(getattr(args, "duration", 10) or 10)
 
-    if brightness < config.current_guard_threshold:
-        print(
-            f"  Note: brightness={brightness} is below current_guard_threshold="
-            f"{config.current_guard_threshold}. Sparkle will still run for preview, "
-            f"but it won't fire automatically at this brightness in the controller."
-        )
+    # The controller's guard is power-based, not a brightness trigger: it fires
+    # only when the colour's draw exceeds the budget. This preview always renders
+    # the scatter so it can be inspected regardless of whether it would fire live.
 
     light = make_light()
 
@@ -121,17 +118,25 @@ def run_sparkle(args, now=None):
     profile = LightProfile(mode="hsb", hue=hue, saturation=sat, brightness=brightness)
 
     sorted_ids = sorted(panel_ids)
-    k = calculate_dim_count(profile, floor, config.current_guard_threshold, len(sorted_ids))
+    k, floor_bri, ceiling_bri = calculate_guard_setting(
+        profile, floor, config.current_guard_threshold, len(sorted_ids)
+    )
     if k <= 0:
-        # Warm colour within budget — no panels would dim in the controller.
-        # Dim half for a visible preview so the scatter pattern is observable.
+        # Within budget — no panels would dim in the controller. Dim half at the
+        # configured floor for a visible preview so the scatter is observable.
         k = len(sorted_ids) // 2
+        floor_bri = int(brightness * min(floor, 100) / 100)
+        ceiling_bri = brightness
     dim_ids = even_spaced(sorted_ids, k)
-    effect = build_sparkle_effect(sorted_ids, dim_ids, profile, floor, config.sparkle_transtime)
+    effect = build_sparkle_effect(
+        sorted_ids, dim_ids, profile.hue, profile.saturation,
+        floor_bri, ceiling_bri, config.sparkle_transtime,
+    )
 
     print(
         f"  Sparkle preview: hue={hue} sat={sat} bri={brightness} "
-        f"transtime={config.sparkle_transtime} floor={floor}% panels={len(sorted_ids)} dimmed={len(dim_ids)}"
+        f"transtime={config.sparkle_transtime} floor_bri={floor_bri} ceiling_bri={ceiling_bri} "
+        f"panels={len(sorted_ids)} dimmed={len(dim_ids)}"
     )
 
     def _apply(l):

@@ -22,7 +22,7 @@ from controller.state import _empty_state, detect_manual_override, load_state, s
 from nanoleaf.sparkle import (
     build_sparkle_animdata,
     build_sparkle_effect,
-    calculate_dim_count,
+    calculate_guard_setting,
     even_spaced,
     hsb_to_rgb,
     power_fraction,
@@ -70,44 +70,71 @@ def test_power_fraction():
 
 
 # ---------------------------------------------------------------------------
-# calculate_dim_count (K)
+# calculate_guard_setting  -> (K, floor_brightness, ceiling_brightness)
 # ---------------------------------------------------------------------------
+
+def _safe_total(threshold, n):
+    return n * (threshold - 5) / 100.0
+
+
+def _rendered_total(hue, sat, k, floor_bri, ceiling_bri, n):
+    """Actual rendered draw: (N-K) ceiling panels + K floor panels."""
+    pc = power_fraction(hsb_to_rgb(hue, sat, ceiling_bri))
+    pf = power_fraction(hsb_to_rgb(hue, sat, floor_bri))
+    return (n - k) * pc + k * pf
+
 
 @pytest.mark.parametrize("floor_pct,expected_k", [(70, 11), (60, 8), (50, 7), (40, 6), (30, 5)])
 def test_k_reference_table(floor_pct, expected_k):
     """Doc reference table: white at ceiling brightness 80, threshold 80, 51 panels."""
     white80 = LightProfile(mode="hsb", hue=0, saturation=0, brightness=80)
-    assert calculate_dim_count(white80, floor_pct, 80, 51) == expected_k
+    k, _floor, ceiling = calculate_guard_setting(white80, floor_pct, 80, 51)
+    assert k == expected_k
+    assert ceiling == 80                      # ceiling stays at target
 
 
 def test_k_zero_for_warm_color():
-    """Warm amber at bri 90 is within budget — no panels need dimming."""
+    """Warm amber at bri 90 is within budget — power-based, no panels dimmed."""
     amber = LightProfile(mode="hsb", hue=20, saturation=70, brightness=90)
-    assert calculate_dim_count(amber, 70, 80, 51) == 0
+    assert calculate_guard_setting(amber, 70, 80, 51) == (0, 90, 90)
 
 
-def test_k_clamped_to_panel_count():
-    """High floor + near-white can exceed the panel count → clamp to N."""
+def test_high_floor_lowers_floor_at_runtime_keeps_ceiling():
+    """floor_pct too high to meet budget → lower the FLOOR at runtime, ceiling stays at target."""
     white = LightProfile(mode="hsb", hue=0, saturation=0, brightness=100)
-    assert calculate_dim_count(white, 90, 80, 51) == 51
+    k, floor_bri, ceiling = calculate_guard_setting(white, 90, 80, 51)
+    assert 0 < k <= 51
+    assert ceiling == 100                     # ceiling NOT capped — floor was lowered instead
+    assert floor_bri < 90                     # runtime floor dropped well below the configured 90%
+    assert _rendered_total(0, 0, k, floor_bri, ceiling, 51) <= _safe_total(80, 51) + 1e-9
 
 
-def test_k_floor_pct_100_no_divzero():
-    """floor_pct == ceiling → nothing to dim, must not divide by zero."""
+def test_floor_pct_100_lowers_floor_no_divzero():
+    """floor_pct == 100 can't scatter at that floor → runtime-lower the floor (no div-by-zero)."""
     white = LightProfile(mode="hsb", hue=0, saturation=0, brightness=100)
-    assert calculate_dim_count(white, 100, 80, 51) == 0
+    k, floor_bri, ceiling = calculate_guard_setting(white, 100, 80, 51)
+    assert k > 0 and ceiling == 100
+    assert _rendered_total(0, 0, k, floor_bri, ceiling, 51) <= _safe_total(80, 51) + 1e-9
 
 
-def test_k_zero_panels():
+def test_guard_zero_panels():
     white = LightProfile(mode="hsb", hue=0, saturation=0, brightness=100)
-    assert calculate_dim_count(white, 70, 80, 0) == 0
+    assert calculate_guard_setting(white, 70, 80, 0) == (0, 100, 100)
 
 
 def test_k_ceil_rounding():
     """K rounds up — even a sliver over budget dims a whole panel."""
-    # white bri 76: power 0.7647; safe (thr80)=0.75 → tiny excess → K >= 1
     nearly = LightProfile(mode="hsb", hue=0, saturation=0, brightness=76)
-    assert calculate_dim_count(nearly, 70, 80, 51) >= 1
+    assert calculate_guard_setting(nearly, 70, 80, 51)[0] >= 1
+
+
+@pytest.mark.parametrize("hue,sat,bri", [(0, 0, 80), (0, 0, 100), (40, 20, 100), (20, 70, 100)])
+@pytest.mark.parametrize("floor_pct", [70, 75, 76, 90, 95, 100])
+def test_budget_invariant_always_met(hue, sat, bri, floor_pct):
+    """Whenever the guard returns a setting, total rendered draw must be <= safe_total."""
+    profile = LightProfile(mode="hsb", hue=hue, saturation=sat, brightness=bri)
+    k, floor_bri, ceiling = calculate_guard_setting(profile, floor_pct, 80, 51)
+    assert _rendered_total(hue, sat, k, floor_bri, ceiling, 51) <= _safe_total(80, 51) + 1e-9
 
 
 # ---------------------------------------------------------------------------
@@ -185,15 +212,15 @@ def test_select_k_gt_population_no_crash():
 # ---------------------------------------------------------------------------
 
 def test_animdata_shape_and_split():
-    profile = LightProfile(mode="hsb", hue=20, saturation=70, brightness=80)
     dim_ids = even_spaced(PANELS_51, 11)
-    anim = build_sparkle_animdata(PANELS_51, dim_ids, 20, 70, 80, 70, 30)
+    # build now takes absolute floor/ceiling brightnesses (56 = 80 * 70%).
+    anim = build_sparkle_animdata(PANELS_51, dim_ids, 20, 70, 56, 80, 30)
     n, panels = _parse_animdata(anim)
 
     assert n == 51
     assert len(panels) == 51
     ceil_rgb = hsb_to_rgb(20, 70, 80)
-    floor_rgb = hsb_to_rgb(20, 70, round(80 * 70 / 100))
+    floor_rgb = hsb_to_rgb(20, 70, 56)
     dim_count = 0
     for pid, frames, r, g, b, w, t in panels:
         assert frames == 1
@@ -209,14 +236,13 @@ def test_animdata_shape_and_split():
 
 def test_animdata_deterministic():
     dim = even_spaced(PANELS_51, 11)
-    a = build_sparkle_animdata(PANELS_51, dim, 20, 70, 80, 70, 30)
-    b = build_sparkle_animdata(PANELS_51, dim, 20, 70, 80, 70, 30)
+    a = build_sparkle_animdata(PANELS_51, dim, 20, 70, 56, 80, 30)
+    b = build_sparkle_animdata(PANELS_51, dim, 20, 70, 56, 80, 30)
     assert a == b
 
 
 def test_build_sparkle_effect_payload():
-    profile = LightProfile(mode="hsb", hue=20, saturation=70, brightness=80)
-    eff = build_sparkle_effect(PANELS_51, even_spaced(PANELS_51, 11), profile, 70, 30)
+    eff = build_sparkle_effect(PANELS_51, even_spaced(PANELS_51, 11), 20, 70, 56, 80, 30)
     assert eff["command"] == "display"
     assert eff["version"] == "2.0"
     assert eff["animType"] == "static"
@@ -344,10 +370,10 @@ def test_hsb_above_threshold_writes_effect(iso_state, monkeypatch):
     assert st["last_applied"]["effect_active"] is True
 
 
-def test_hsb_below_threshold_uses_set_hsb(iso_state, monkeypatch):
+def test_hsb_within_budget_uses_set_hsb(iso_state, monkeypatch):
     lamp = _MockLamp()
     ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=20, sat=70, brightness=70)   # below threshold 80
+    now = _seed_party(hue=20, sat=70, brightness=70)   # warm → within budget (power-based)
     ctrl.run(now=now)
     assert "set_hsb" in lamp.names()
     assert "write_effect" not in lamp.names()
@@ -444,14 +470,15 @@ def test_write_effect_connection_error_triggers_backoff(iso_state, monkeypatch):
     assert st["lamp_failure_state"]["next_retry_at"] is not None
 
 
-def test_floor_pct_100_caps_no_effect(iso_state, monkeypatch):
-    # floor_pct=100 leaves nothing to dim → cap brightness, no sparkle.
+def test_floor_pct_100_lowers_floor_and_sparkles(iso_state, monkeypatch):
+    # floor_pct=100 can't scatter at that floor → runtime-lower the floor and
+    # sparkle (ceiling stays at target). NOT a flat cap.
     lamp = _MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90, floor=100)
     ctrl.run(now=now)
-    assert "write_effect" not in lamp.names()
-    assert load_state()["last_applied"]["current_guard_active"] == "brightness_cap"
+    assert "write_effect" in lamp.names()
+    assert load_state()["last_applied"]["current_guard_active"] == "sparkle"
 
 
 def test_skip_guard_unchanged_effect(iso_state, monkeypatch):
@@ -459,8 +486,43 @@ def test_skip_guard_unchanged_effect(iso_state, monkeypatch):
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
-    ctrl.run(now=now + timedelta(minutes=2))            # identical effect
+    ctrl.run(now=now + timedelta(minutes=2))            # identical effect, lamp ON
     assert lamp.names().count("write_effect") == 1      # second tick skipped
+
+
+def test_rewrite_forced_after_power_on(iso_state, monkeypatch):
+    # RISK-2: if the lamp was OFF, power_on drops the volatile effect, so we must
+    # rewrite even when the hash matches and NVRAM still reads colorMode "effect".
+    lamp = _MockLamp()
+    ctrl = _wire(monkeypatch, lamp)
+    now = _seed_party(hue=0, sat=0, brightness=90)
+    ctrl.run(now=now)                                   # write #1, lamp on, hash stored
+    assert lamp.names().count("write_effect") == 1
+    # Lamp turned off (volatile effect lost) without tripping manual_off:
+    # expected power already False, NVRAM still reports "effect".
+    st = load_state()
+    st["last_applied"]["power"] = False
+    save_state(st)
+    lamp._state["on"] = False
+    lamp._state["colorMode"] = "effect"
+    ctrl.run(now=now + timedelta(minutes=2))
+    assert lamp.names().count("write_effect") == 2      # forced rewrite, not skipped
+
+
+def test_guard_skipped_when_should_be_on_false(iso_state, monkeypatch):
+    # MINOR-3: a high-power colour that WOULD fire the guard, but the lamp is going
+    # off (manual-off during party → should_be_on False) → no sparkle write.
+    lamp = _MockLamp()
+    lamp._state["on"] = False                           # user turned it off
+    ctrl = _wire(monkeypatch, lamp)
+    now = _seed_party(hue=0, sat=0, brightness=90)
+    st = load_state()
+    st["last_applied"] = {"power": True, "profile": {}, "phase": "party_mode",
+                          "timestamp": now.isoformat()}
+    save_state(st)
+    ctrl.run(now=now)
+    assert "write_effect" not in lamp.names()
+    assert load_state()["last_applied"].get("current_guard_active") is None
 
 
 def test_party_floor_override_reaches_effect(iso_state, monkeypatch):

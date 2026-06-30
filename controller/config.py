@@ -102,6 +102,9 @@ class Config:
 
     # --- Current guard / sparkle scatter (Phase 1 v2) ---
     current_guard_enabled: bool = True
+    # Safe per-panel power budget reference: safe_total = N*(threshold-5)/100.
+    # This is NOT a brightness trigger — the guard evaluates ACTUAL power every
+    # tick and fires only when the colour at its brightness exceeds the budget.
     current_guard_threshold: int = 80
     sparkle_floor_pct: int = 70
     # Per-panel fade-in in 100 ms units (30 = 3 s). Applies only on color
@@ -125,25 +128,25 @@ class LightProfile:
 
 
 # Sunrise start: warm dim amber (beginning of two-stage morning ramp)
-SUNRISE_START_PROFILE = LightProfile(mode="hsb", hue=20, saturation=70, brightness=5)
+SUNRISE_START_PROFILE = LightProfile(mode="hsb", hue=20, saturation=70, brightness=10)
 
 # Sunrise end / morning ramp stage 1 target: warm bright (end of stage 1)
-SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=50)
+SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=60)
 
 # Morning: cool blue-white, energizing (stage 2 target — final morning state)
-MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=55)
+MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=70)
 
 # Daytime-on (used when outside is dark): warm orange-red, soft
-DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=15, saturation=80, brightness=33)
+DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=15, saturation=80, brightness=70)
 
 # Night: deep red, cozy, dim
-NIGHT_PROFILE = LightProfile(mode="hsb", hue=8, saturation=90, brightness=20)
+NIGHT_PROFILE = LightProfile(mode="hsb", hue=8, saturation=90, brightness=50)
 
 # Late-night manual override: pure red, low, visible
-LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=4, saturation=90, brightness=25)
+LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=4, saturation=90, brightness=40)
 
 # Default party profile: vivid purple, full brightness
-PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=55)
+PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=80)
 
 # Off target (brightness=0 signals power-off intent to interpolate_profiles)
 OFF_PROFILE = LightProfile(mode="hsb", brightness=0)
