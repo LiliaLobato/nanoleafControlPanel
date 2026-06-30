@@ -284,14 +284,17 @@ def run(now: Optional[datetime] = None) -> None:
             logger.debug("current_guard: HSB within budget (K=0) — no sparkle, no cap")
             state["sparkle_effect_hash"] = None
         else:
-            # Over budget but no panel IDs — cannot scatter; flat cap fallback.
-            capped = config.current_guard_threshold - 5
-            logger.info(
-                "current_guard: no panel IDs — capping brightness %d → %d",
-                effective_color.brightness, capped,
-            )
-            effective_color = dataclasses.replace(effective_color, brightness=capped)
-            current_guard_active = "brightness_cap"
+            # No panel IDs — cannot scatter, and without a panel count we cannot
+            # compute the budget (the n=0 path returns "within budget"). Cap DOWN
+            # only: never raise a dim, within-budget colour up to the cap.
+            safe_bri = config.current_guard_threshold - 5
+            if effective_color.brightness > safe_bri:
+                logger.info(
+                    "current_guard: no panel IDs — capping brightness %d → %d",
+                    effective_color.brightness, safe_bri,
+                )
+                effective_color = dataclasses.replace(effective_color, brightness=safe_bri)
+                current_guard_active = "brightness_cap"
             state["sparkle_effect_hash"] = None
     elif guard_on and effective_color.mode == "ct":
         # CT cannot be expressed per-panel in animData. Power-based flat cap:
@@ -365,7 +368,8 @@ def run(now: Optional[datetime] = None) -> None:
             sparkle_effect = None
         else:
             state["sparkle_effect_hash"] = effect_hash
-            current_guard_active = "sparkle"
+            # current_guard_active was already set in the guard block above
+            # ("sparkle" or "sparkle_capped") — don't overwrite it here.
             effect_active = True
             logger.debug("→ Sparkle written (%d panels, %d dimmed)", len(sorted_ids), len(dim_ids))
     else:

@@ -445,6 +445,19 @@ def test_no_panel_ids_falls_back_to_cap(iso_state, monkeypatch):
     assert load_state()["last_applied"]["current_guard_active"] == "brightness_cap"
 
 
+def test_no_panel_ids_does_not_raise_dim_color(iso_state, monkeypatch):
+    # RISK-1: with no panel IDs we cannot compute the budget, so cap DOWN only —
+    # a dim colour (50 < threshold-5=75) must NOT be brightened up to the cap.
+    lamp = _MockLamp(panel_ids_raises=True)
+    ctrl = _wire(monkeypatch, lamp)
+    now = _seed_party(hue=0, sat=0, brightness=50)
+    ctrl.run(now=now)
+    st = load_state()
+    assert "write_effect" not in lamp.names()
+    assert st["last_applied"]["profile"]["brightness"] == 50           # not raised to 75
+    assert st["last_applied"].get("current_guard_active") is None      # not labelled a cap
+
+
 def test_write_effect_4xx_degrades_to_cap(iso_state, monkeypatch):
     # write_effect returns False = lamp rejected the payload (4xx) → degrade to a
     # capped solid colour, NO backoff.
@@ -532,7 +545,7 @@ def test_party_floor_override_reaches_effect(iso_state, monkeypatch):
     ctrl.run(now=now)
     effect = next(c[1] for c in lamp.calls if c[0] == "write_effect")
     _, panels = _parse_animdata(effect["animData"])
-    floor_rgb = hsb_to_rgb(0, 0, round(90 * 30 / 100))  # floor at 30%
+    floor_rgb = hsb_to_rgb(0, 0, int(90 * 30 / 100))  # floor at 30% (impl uses int())
     assert any((r, g, b) == floor_rgb for _, _, r, g, b, _, _ in panels)
 
 

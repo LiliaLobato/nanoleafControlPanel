@@ -3,7 +3,7 @@
 Sparkle scatter effect for the Nanoleaf current guard (Phase 1 v2).
 
 All panels share the same hue and saturation as the target profile. A
-power-budget calculation (``calculate_dim_count``) decides how many panels (K)
+power-budget calculation (``calculate_guard_setting``) decides how many panels (K)
 must drop to a floor brightness so the lamp's total current draw stays within
 the PSU budget; the remaining (N − K) stay at the ceiling (target) brightness.
 The result is a single ``animType:"static"`` payload written in one PUT /effects.
