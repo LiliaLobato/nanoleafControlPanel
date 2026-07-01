@@ -105,7 +105,7 @@ class Config:
     # Safe per-panel power budget reference: safe_total = N*(threshold-5)/100.
     # This is NOT a brightness trigger — the guard evaluates ACTUAL power every
     # tick and fires only when the colour at its brightness exceeds the budget.
-    current_guard_threshold: int = 80
+    current_guard_threshold: int = 70
     sparkle_floor_pct: int = 70
     # Per-panel fade-in in 100 ms units (30 = 3 s). Applies only on color
     # change/activation. Must stay well below the cron tick interval (1200 = 2 min).

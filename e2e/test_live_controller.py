@@ -116,7 +116,10 @@ def test_evening_ramp_profile_reaches_lamp(monkeypatch, light):
       calculate_phase → calculate_target_profile → apply_profile → lamp.
     """
     import sunrise_sunset_controller as ctrl
-    from controller.config import DAYTIME_ON_PROFILE
+    from controller.config import load_profiles
+    # Compare against the EFFECTIVE profile (defaults + config.json overrides),
+    # not the raw default constant — the controller applies the effective one.
+    DAYTIME_ON_PROFILE = load_profiles()["DAYTIME_ON"]
 
     # sunset at 20:00; 20:30 → past sunset, before force_evening (21:00) → evening_ramp
     weather = _make_weather(sunrise_hour=5, sunset_hour=20)
@@ -156,7 +159,10 @@ def test_prestaging_while_off(monkeypatch, light):
     validated at the API layer by test_live_lamp.py::test_color_while_off_prestaging.
     """
     import sunrise_sunset_controller as ctrl
-    from controller.config import DAYTIME_ON_PROFILE
+    from controller.config import load_profiles
+    # Compare against the EFFECTIVE profile (defaults + config.json overrides),
+    # not the raw default constant — the controller applies the effective one.
+    DAYTIME_ON_PROFILE = load_profiles()["DAYTIME_ON"]
 
     weather = _make_weather(sunrise_hour=5, sunset_hour=20, fixture="clear.json")
     monkeypatch.setattr(ctrl, "get_weather", lambda *_a, **_kw: weather)

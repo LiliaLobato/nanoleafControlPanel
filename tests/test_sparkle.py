@@ -397,7 +397,8 @@ def test_ct_above_threshold_caps_no_effect(iso_state, monkeypatch):
     ctrl.run(now=now)
     assert "write_effect" not in lamp.names()
     ct_calls = [c for c in lamp.calls if c[0] == "set_ct"]
-    assert ct_calls and ct_calls[0][2] == 75            # threshold-5
+    expected_cap = Config().current_guard_threshold - 5   # derive from default threshold
+    assert ct_calls and ct_calls[0][2] == expected_cap
     assert load_state()["last_applied"]["current_guard_active"] == "brightness_cap"
 
 
