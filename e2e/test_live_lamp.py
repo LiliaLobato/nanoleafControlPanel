@@ -247,3 +247,122 @@ def test_ct_to_hsb_and_back(light):
     # should not crash and should return to CT mode
     state = light.get_full_state()
     assert state != {}
+
+
+# ---------------------------------------------------------------------------
+# Current-guard / sparkle — power-based static effect (Phase 1 v2)
+# ---------------------------------------------------------------------------
+
+
+def _build_static_effect(light, hue=0, sat=0, brightness=90):
+    """Build a real static sparkle payload from the lamp's live panel layout.
+
+    Uses calculate_guard_setting to pick K/floor/ceiling for the colour; if the
+    colour is within budget (K=0) it dims half the panels so the effect still
+    renders something visible on hardware.
+    """
+    from controller.config import LightProfile, load_config
+    from nanoleaf.sparkle import (
+        build_sparkle_effect, calculate_guard_setting, even_spaced,
+    )
+
+    config = load_config()
+    sorted_ids = light.get_panel_ids()
+    profile = LightProfile(mode="hsb", hue=hue, saturation=sat, brightness=brightness)
+    k, floor_bri, ceiling_bri = calculate_guard_setting(
+        profile, config.sparkle_floor_pct, config.current_guard_threshold, len(sorted_ids),
+    )
+    if k <= 0:
+        k = max(1, len(sorted_ids) // 2)
+        floor_bri = int(brightness * min(config.sparkle_floor_pct, 100) / 100)
+        ceiling_bri = brightness
+    dim_ids = even_spaced(sorted_ids, k)
+    effect = build_sparkle_effect(
+        sorted_ids, dim_ids, hue, sat, floor_bri, ceiling_bri, config.sparkle_transtime,
+    )
+    return effect, sorted_ids
+
+
+def test_live_get_panel_ids_returns_display_panels(light):
+    """get_panel_ids() returns a non-empty, sorted, unique list of DISPLAY panels;
+    the Rhythm module (shapeType 1) is excluded."""
+    ids = light.get_panel_ids()
+    assert isinstance(ids, list) and len(ids) >= 1, f"expected >=1 panel id, got {ids}"
+    assert ids == sorted(ids), f"panel ids should be sorted, got {ids}"
+    assert len(ids) == len(set(ids)), f"panel ids should be unique, got {ids}"
+    # Cross-check the Rhythm module is filtered out.
+    raw = light.get_info()["panelLayout"]["layout"]["positionData"]
+    rhythm = {p["panelId"] for p in raw if p.get("shapeType") == 1}
+    assert not (set(ids) & rhythm), f"Rhythm panels {rhythm} leaked into {ids}"
+
+
+def test_live_get_full_state_with_panels_single_get(light):
+    """get_full_state(with_panels=True) returns the state keys AND panel_ids in a
+    single round-trip; panel_ids matches get_panel_ids()."""
+    state = light.get_full_state(with_panels=True)
+    for key in ("on", "hue", "sat", "brightness", "ct", "colorMode", "panel_ids"):
+        assert key in state, f"missing key: {key}"
+    assert state["panel_ids"] == light.get_panel_ids(), \
+        "panel_ids from get_full_state(with_panels=True) should match get_panel_ids()"
+
+
+def test_live_write_effect_static_renders(light):
+    """A static sparkle payload writes cleanly (2xx), the lamp reports colorMode
+    'effect' and stays ON, and a follow-up read still succeeds (no firmware crash)."""
+    light.power_on()
+    time.sleep(0.5)
+    effect, _ = _build_static_effect(light, hue=0, sat=0, brightness=90)
+    try:
+        assert light.write_effect(effect) is True, \
+            "write_effect should return True for a valid static payload"
+        time.sleep(2)  # firmware needs a moment to parse/apply the animData
+        state = light.get_full_state()
+        assert state != {}, "lamp unreachable after write_effect — possible crash"
+        assert state["on"] is True, f"lamp should stay ON after effect; got {state}"
+        assert state["colorMode"] == "effect", \
+            f"expected colorMode 'effect' after static write, got {state['colorMode']!r}"
+        assert light.get_full_state() != {}, "second read after effect failed"
+    finally:
+        light.power_off(); time.sleep(0.5)
+        light.power_on();  time.sleep(0.5)
+
+
+def test_live_effect_reports_default_color_fields(light):
+    """Pins the P1-7 assumption: while a static effect runs, GET /state reports
+    firmware DEFAULT colour fields, not the last solid colour set."""
+    light.power_on()
+    time.sleep(0.5)
+    light.set_hsb(240, 80, 60)   # distinctive blue
+    time.sleep(1)
+    effect, _ = _build_static_effect(light, hue=0, sat=0, brightness=90)
+    try:
+        assert light.write_effect(effect) is True
+        time.sleep(2)
+        state = light.get_full_state()
+        assert state["colorMode"] == "effect", \
+            f"expected colorMode 'effect', got {state['colorMode']!r}"
+        assert abs(state["hue"] - 240) > 10, (
+            f"effect mode should report DEFAULT hue (not the 240 we set); got {state['hue']}. "
+            "If this fails, the P1-7 override-detection assumption is invalid for this device."
+        )
+    finally:
+        light.power_off(); time.sleep(0.5)
+        light.power_on();  time.sleep(0.5)
+
+
+def test_live_power_off_overrides_effect(light):
+    """PUT /state {on:false} cleanly exits a running static effect (lamp powers off)."""
+    light.power_on()
+    time.sleep(0.5)
+    effect, _ = _build_static_effect(light, hue=0, sat=0, brightness=90)
+    assert light.write_effect(effect) is True
+    time.sleep(2)
+    try:
+        light.power_off()
+        time.sleep(1)
+        state = light.get_full_state()
+        print(f"State after power_off from effect: {state}")
+        assert state["on"] is False, \
+            f"power_off should exit the effect and turn the lamp off; got on={state['on']}"
+    finally:
+        light.power_on(); time.sleep(0.5)

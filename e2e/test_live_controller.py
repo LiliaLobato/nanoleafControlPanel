@@ -346,3 +346,69 @@ def test_backoff_skips_lamp_but_updates_state(monkeypatch):
         f"consecutive_failures should stay at 1 during backoff, "
         f"got {saved2['lamp_failure_state']['consecutive_failures']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 6/7. Power-based current guard — fires on over-budget colour, dormant on warm
+# ---------------------------------------------------------------------------
+
+def _seed_party_profile(hue, sat, brightness, now):
+    """Write an active party_mode with a custom HSB profile (bypasses the timeline
+    so the guard sees exactly this colour)."""
+    import controller.state as state_mod
+    st = state_mod._empty_state()
+    st["party_mode"] = {
+        "active":       True,
+        "started_at":   now.isoformat(),
+        "ends_at":      now.replace(hour=23, minute=59).isoformat(),
+        "fade_minutes": 0,
+        "profile": {"mode": "hsb", "hue": hue, "saturation": sat,
+                    "brightness": brightness, "color_temp": 0},
+    }
+    state_mod.save_state(st)
+
+
+def test_live_guard_fires_on_white_high_brightness(monkeypatch, light):
+    """A near-white, high-brightness colour is over the power budget, so the
+    controller writes a static sparkle effect (lamp ends in colorMode 'effect')."""
+    import sunrise_sunset_controller as ctrl
+
+    monkeypatch.setattr(ctrl, "get_weather", lambda *_a, **_kw: _make_weather(sunset_hour=20))
+    now = _now_at(21, 0)
+    _seed_party_profile(hue=0, sat=0, brightness=95, now=now)
+
+    light.power_on()
+    time.sleep(0.5)
+    ctrl.main(now=now)
+    time.sleep(2)
+
+    state = light.get_full_state()
+    print(f"Lamp after near-white high-brightness guard run: {state}")
+    assert state != {}, "lamp unreachable after guard run — possible crash"
+    assert state["colorMode"] == "effect", (
+        f"near-white bri95 is over budget — expected sparkle (colorMode 'effect'), "
+        f"got {state['colorMode']!r}"
+    )
+
+
+def test_live_guard_dormant_on_warm_color(monkeypatch, light):
+    """A warm, saturated colour draws little power and stays within budget, so the
+    power-based guard stays dormant — the lamp shows a solid colour, not an effect."""
+    import sunrise_sunset_controller as ctrl
+
+    monkeypatch.setattr(ctrl, "get_weather", lambda *_a, **_kw: _make_weather(sunset_hour=20))
+    now = _now_at(21, 0)
+    _seed_party_profile(hue=15, sat=80, brightness=70, now=now)
+
+    light.power_on()
+    time.sleep(0.5)
+    ctrl.main(now=now)
+    time.sleep(1)
+
+    state = light.get_full_state()
+    print(f"Lamp after warm-colour guard run: {state}")
+    assert state["colorMode"] != "effect", (
+        f"warm HSB(15,80,70) is within budget — guard should stay dormant (solid), "
+        f"got colorMode {state['colorMode']!r}"
+    )
+    assert abs(state["hue"] - 15) <= 4, f"expected warm hue ~15, got {state['hue']}"
