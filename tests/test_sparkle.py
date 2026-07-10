@@ -24,6 +24,7 @@ from nanoleaf.sparkle import (
     build_sparkle_effect,
     calculate_guard_setting,
     even_spaced,
+    flicker_load,
     hsb_to_rgb,
     power_fraction,
     select_dim_panels,
@@ -78,25 +79,26 @@ def _safe_total(threshold, n):
 
 
 def _rendered_total(hue, sat, k, floor_bri, ceiling_bri, n):
-    """Actual rendered draw: (N-K) ceiling panels + K floor panels."""
-    pc = power_fraction(hsb_to_rgb(hue, sat, ceiling_bri))
-    pf = power_fraction(hsb_to_rgb(hue, sat, floor_bri))
-    return (n - k) * pc + k * pf
+    """Actual aggregate flicker load: (N-K) ceiling panels + K floor panels."""
+    lc = flicker_load(hsb_to_rgb(hue, sat, ceiling_bri))
+    lf = flicker_load(hsb_to_rgb(hue, sat, floor_bri))
+    return (n - k) * lc + k * lf
 
 
-@pytest.mark.parametrize("floor_pct,expected_k", [(70, 11), (60, 8), (50, 7), (40, 6), (30, 5)])
-def test_k_reference_table(floor_pct, expected_k):
-    """Doc reference table: white at ceiling brightness 80, threshold 80, 51 panels."""
+@pytest.mark.parametrize("floor_pct", [70, 60, 50, 40, 30])
+def test_sparkle_keeps_ceiling_within_flicker_budget(floor_pct):
+    """White over budget: sparkle dims K panels, ceiling stays at target, aggregate within budget."""
     white80 = LightProfile(mode="hsb", hue=0, saturation=0, brightness=80)
-    k, _floor, ceiling = calculate_guard_setting(white80, floor_pct, 80, 51)
-    assert k == expected_k
-    assert ceiling == 80                      # ceiling stays at target
+    k, floor_bri, ceiling = calculate_guard_setting(white80, floor_pct, 80, 51)
+    assert 0 < k <= 51
+    assert ceiling == 80                      # ceiling stays at target — sparkle, not cap
+    assert _rendered_total(0, 0, k, floor_bri, ceiling, 51) <= _safe_total(80, 51) + 1e-9
 
 
-def test_k_zero_for_warm_color():
-    """Warm amber at bri 90 is within budget — power-based, no panels dimmed."""
-    amber = LightProfile(mode="hsb", hue=20, saturation=70, brightness=90)
-    assert calculate_guard_setting(amber, 70, 80, 51) == (0, 90, 90)
+def test_k_zero_for_within_budget_color():
+    """A colour whose flicker load is within budget → no panels dimmed."""
+    amber = LightProfile(mode="hsb", hue=20, saturation=70, brightness=50)
+    assert calculate_guard_setting(amber, 70, 80, 51) == (0, 50, 50)
 
 
 def test_high_floor_lowers_floor_at_runtime_keeps_ceiling():
@@ -373,7 +375,7 @@ def test_hsb_above_threshold_writes_effect(iso_state, monkeypatch):
 def test_hsb_within_budget_uses_set_hsb(iso_state, monkeypatch):
     lamp = _MockLamp()
     ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=20, sat=70, brightness=70)   # warm → within budget (power-based)
+    now = _seed_party(hue=20, sat=70, brightness=30)   # warm + dim → flicker load within budget
     ctrl.run(now=now)
     assert "set_hsb" in lamp.names()
     assert "write_effect" not in lamp.names()
@@ -382,11 +384,11 @@ def test_hsb_within_budget_uses_set_hsb(iso_state, monkeypatch):
 def test_hsb_warm_k0_uses_set_hsb_no_cap(iso_state, monkeypatch):
     lamp = _MockLamp()
     ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=20, sat=70, brightness=90)   # warm, K=0
+    now = _seed_party(hue=20, sat=70, brightness=30)   # warm + dim → within budget, K=0
     ctrl.run(now=now)
     assert "write_effect" not in lamp.names()
     set_calls = [c for c in lamp.calls if c[0] == "set_hsb"]
-    assert set_calls and set_calls[0][3] == 90          # not capped
+    assert set_calls and set_calls[0][3] == 30          # not capped
     assert load_state()["last_applied"].get("current_guard_active") is None
 
 
@@ -447,15 +449,15 @@ def test_no_panel_ids_falls_back_to_cap(iso_state, monkeypatch):
 
 
 def test_no_panel_ids_does_not_raise_dim_color(iso_state, monkeypatch):
-    # RISK-1: with no panel IDs we cannot compute the budget, so cap DOWN only —
-    # a dim colour (50 < threshold-5=75) must NOT be brightened up to the cap.
+    # RISK-1: with no panel IDs we cannot sparkle, so cap DOWN only —
+    # a dim colour (40 < threshold-5=45) must NOT be brightened up to the cap.
     lamp = _MockLamp(panel_ids_raises=True)
     ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=50)
+    now = _seed_party(hue=0, sat=0, brightness=40)
     ctrl.run(now=now)
     st = load_state()
     assert "write_effect" not in lamp.names()
-    assert st["last_applied"]["profile"]["brightness"] == 50           # not raised to 75
+    assert st["last_applied"]["profile"]["brightness"] == 40           # not raised to 45
     assert st["last_applied"].get("current_guard_active") is None      # not labelled a cap
 
 
@@ -542,11 +544,11 @@ def test_guard_skipped_when_should_be_on_false(iso_state, monkeypatch):
 def test_party_floor_override_reaches_effect(iso_state, monkeypatch):
     lamp = _MockLamp()
     ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90, floor=30)
+    now = _seed_party(hue=0, sat=0, brightness=60, floor=30)
     ctrl.run(now=now)
     effect = next(c[1] for c in lamp.calls if c[0] == "write_effect")
     _, panels = _parse_animdata(effect["animData"])
-    floor_rgb = hsb_to_rgb(0, 0, int(90 * 30 / 100))  # floor at 30% (impl uses int())
+    floor_rgb = hsb_to_rgb(0, 0, int(60 * 30 / 100))  # floor at 30% (impl uses int())
     assert any((r, g, b) == floor_rgb for _, _, r, g, b, _, _ in panels)
 
 
