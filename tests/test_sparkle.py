@@ -25,6 +25,7 @@ from nanoleaf.sparkle import (
     calculate_guard_setting,
     even_spaced,
     hsb_to_rgb,
+    max_brightness_within_flicker,
     power_fraction,
     select_dim_panels,
 )
@@ -386,7 +387,9 @@ def test_ct_above_threshold_caps_no_effect(iso_state, monkeypatch):
     ctrl.run(now=now)
     assert "write_effect" not in lamp.names()
     ct_calls = [c for c in lamp.calls if c[0] == "set_ct"]
-    expected_cap = Config().current_guard_threshold - 5   # derive from default threshold
+    # CT is flicker-capped as worst-case white (near-white flickers above ~bri 26).
+    safe_load = (Config().current_guard_threshold - 5) / 100.0
+    expected_cap = max_brightness_within_flicker(0, 0, safe_load)
     assert ct_calls and ct_calls[0][2] == expected_cap
     assert load_state()["last_applied"]["current_guard_active"] == "brightness_cap"
 
@@ -437,15 +440,15 @@ def test_no_panel_ids_falls_back_to_cap(iso_state, monkeypatch):
 
 def test_no_panel_ids_does_not_raise_dim_color(iso_state, monkeypatch):
     # RISK-1: with no panel IDs we cannot sparkle, so cap DOWN only —
-    # a dim colour (40 < threshold-5=45) must NOT be brightened up to the cap.
+    # a within-budget colour (white@20, flicker-safe) must NOT be raised/capped.
     lamp = _MockLamp(panel_ids_raises=True)
     ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=40)
+    now = _seed_party(hue=0, sat=0, brightness=20)
     ctrl.run(now=now)
     st = load_state()
     assert "write_effect" not in lamp.names()
-    assert st["last_applied"]["profile"]["brightness"] == 40           # not raised to 45
-    assert st["last_applied"].get("current_guard_active") is None      # not labelled a cap
+    assert st["last_applied"]["profile"]["brightness"] == 20           # within budget, untouched
+    assert st["last_applied"].get("current_guard_active") is None      # not capped
 
 
 def test_write_effect_4xx_degrades_to_cap(iso_state, monkeypatch):

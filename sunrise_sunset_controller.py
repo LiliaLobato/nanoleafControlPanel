@@ -21,7 +21,12 @@ import filelock
 from dotenv import load_dotenv
 
 from nanoleaf.color_helper import describe_color
-from nanoleaf.sparkle import build_sparkle_effect, calculate_guard_setting, select_dim_panels
+from nanoleaf.sparkle import (
+    build_sparkle_effect,
+    calculate_guard_setting,
+    max_brightness_within_flicker,
+    select_dim_panels,
+)
 from controller.config import load_config
 from controller.dateTime import parse_iso
 from controller.log_setup import setup_logging
@@ -267,44 +272,38 @@ def run(now: Optional[datetime] = None) -> None:
                 sorted_ids, dim_ids, effective_color.hue, effective_color.saturation,
                 floor_bri, ceiling_bri, config.sparkle_transtime,
             )
-            if ceiling_bri < effective_color.brightness:
-                # Last resort — even max dimming needed the ceiling lowered too.
-                logger.info(
-                    "current_guard: sparkle K=%d + ceiling cap %d → %d (last resort)",
-                    k, effective_color.brightness, ceiling_bri,
-                )
-                effective_color = dataclasses.replace(effective_color, brightness=ceiling_bri)
-                current_guard_active = "sparkle_capped"
-            else:
-                logger.debug(
-                    "current_guard: sparkle K=%d (floor=%d ceiling=%d)", k, floor_bri, ceiling_bri,
-                )
-                current_guard_active = "sparkle"
+            logger.debug(
+                "current_guard: sparkle K=%d (floor=%d ceiling=%d)", k, floor_bri, ceiling_bri,
+            )
+            current_guard_active = "sparkle"
         elif panel_ids:
             # Within budget (K=0) — apply normally, no sparkle, no cap.
             logger.debug("current_guard: HSB within budget (K=0) — no sparkle, no cap")
             state["sparkle_effect_hash"] = None
         else:
-            # No panel IDs — cannot scatter, and without a panel count we cannot
-            # compute the budget (the n=0 path returns "within budget"). Cap DOWN
-            # only: never raise a dim, within-budget colour up to the cap.
-            safe_bri = config.current_guard_threshold - 5
+            # No panel IDs — cannot scatter. Cap this colour to its flicker-safe
+            # brightness (cap DOWN only: never raise a dim, within-budget colour).
+            safe_load = (config.current_guard_threshold - 5) / 100.0
+            safe_bri = max_brightness_within_flicker(
+                effective_color.hue, effective_color.saturation, safe_load
+            )
             if effective_color.brightness > safe_bri:
                 logger.info(
-                    "current_guard: no panel IDs — capping brightness %d → %d",
+                    "current_guard: no panel IDs — flicker-capping brightness %d → %d",
                     effective_color.brightness, safe_bri,
                 )
                 effective_color = dataclasses.replace(effective_color, brightness=safe_bri)
                 current_guard_active = "brightness_cap"
             state["sparkle_effect_hash"] = None
     elif guard_on and effective_color.mode == "ct":
-        # CT cannot be expressed per-panel in animData. Power-based flat cap:
-        # treat CT as worst-case white (p_full=1.0) and cap only when the target
-        # brightness would exceed the per-panel budget (threshold-5).
-        safe_bri = config.current_guard_threshold - 5
+        # CT cannot be expressed per-panel in animData, so it can't sparkle. Treat
+        # CT as worst-case white and cap to the flicker-safe brightness — near-white
+        # flickers above ~bri 30, so this caps lower than the old flat threshold-5.
+        safe_load = (config.current_guard_threshold - 5) / 100.0
+        safe_bri = max_brightness_within_flicker(0, 0, safe_load)
         if effective_color.brightness > safe_bri:
             logger.info(
-                "current_guard: CT over budget — capping brightness %d → %d",
+                "current_guard: CT flicker-capping brightness %d → %d",
                 effective_color.brightness, safe_bri,
             )
             effective_color = dataclasses.replace(effective_color, brightness=safe_bri)

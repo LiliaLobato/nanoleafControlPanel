@@ -114,6 +114,20 @@ def flicker_load(rgb: tuple[int, int, int]) -> float:
     return (mx + _FLICKER_OTHER_WEIGHT * (sum(rgb) - mx)) / 255.0
 
 
+def max_brightness_within_flicker(hue: int, sat: int, safe_load: float) -> int:
+    """Highest brightness 0-100 whose rendered flicker_load <= safe_load.
+
+    Used to cap states that CANNOT sparkle (CT — no per-panel colour in animData;
+    and the no-panel-IDs HSB fallback). flicker_load is monotonic in brightness, so
+    scan downward and return the first brightness at or under the target —
+    truncation guarantees the rendered load never exceeds safe_load.
+    """
+    for bri in range(100, -1, -1):
+        if flicker_load(hsb_to_rgb(hue, sat, bri)) <= safe_load:
+            return bri
+    return 0
+
+
 def even_spaced(sorted_ids: list[int], k: int) -> list[int]:
     """Pick k panels spread evenly across sorted_ids (deterministic, no RNG).
 

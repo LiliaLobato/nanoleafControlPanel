@@ -111,7 +111,9 @@ class Config:
     # The ceiling always holds target — capping K trades a little residual flicker
     # for keeping most panels bright.
     sparkle_max_dim_panels: int = 10
-    sparkle_floor_pct: int = 70
+    # Dimmed panels drop to this % of the ceiling. Kept LOW so the few (<=max_dim)
+    # dimmed panels remove enough current to actually reduce flicker; tune on hardware.
+    sparkle_floor_pct: int = 30
     # Per-panel fade-in in 100 ms units (30 = 3 s). Applies only on color
     # change/activation. Must stay well below the cron tick interval (1200 = 2 min).
     sparkle_transtime: int = 30
