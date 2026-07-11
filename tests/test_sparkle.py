@@ -24,7 +24,6 @@ from nanoleaf.sparkle import (
     build_sparkle_effect,
     calculate_guard_setting,
     even_spaced,
-    flicker_load,
     hsb_to_rgb,
     power_fraction,
     select_dim_panels,
@@ -74,25 +73,14 @@ def test_power_fraction():
 # calculate_guard_setting  -> (K, floor_brightness, ceiling_brightness)
 # ---------------------------------------------------------------------------
 
-def _safe_total(threshold, n):
-    return n * (threshold - 5) / 100.0
-
-
-def _rendered_total(hue, sat, k, floor_bri, ceiling_bri, n):
-    """Actual aggregate flicker load: (N-K) ceiling panels + K floor panels."""
-    lc = flicker_load(hsb_to_rgb(hue, sat, ceiling_bri))
-    lf = flicker_load(hsb_to_rgb(hue, sat, floor_bri))
-    return (n - k) * lc + k * lf
-
-
 @pytest.mark.parametrize("floor_pct", [70, 60, 50, 40, 30])
-def test_sparkle_keeps_ceiling_within_flicker_budget(floor_pct):
-    """White over budget: sparkle dims K panels, ceiling stays at target, aggregate within budget."""
+def test_sparkle_dims_up_to_cap_holds_ceiling(floor_pct):
+    """White over budget: sparkle dims K (<= max_dim cap) panels; ceiling holds target."""
     white80 = LightProfile(mode="hsb", hue=0, saturation=0, brightness=80)
     k, floor_bri, ceiling = calculate_guard_setting(white80, floor_pct, 80, 51)
-    assert 0 < k <= 51
-    assert ceiling == 80                      # ceiling stays at target — sparkle, not cap
-    assert _rendered_total(0, 0, k, floor_bri, ceiling, 51) <= _safe_total(80, 51) + 1e-9
+    assert 0 < k <= 10                        # capped at max_dim (default 10)
+    assert ceiling == 80                      # ceiling always holds target
+    assert floor_bri == int(80 * floor_pct / 100)
 
 
 def test_k_zero_for_within_budget_color():
@@ -101,22 +89,20 @@ def test_k_zero_for_within_budget_color():
     assert calculate_guard_setting(amber, 70, 80, 51) == (0, 50, 50)
 
 
-def test_high_floor_lowers_floor_at_runtime_keeps_ceiling():
-    """floor_pct too high to meet budget → lower the FLOOR at runtime, ceiling stays at target."""
+def test_dim_count_capped_and_ceiling_held():
+    """A colour far over budget dims at most max_dim panels; ceiling never lowered."""
     white = LightProfile(mode="hsb", hue=0, saturation=0, brightness=100)
-    k, floor_bri, ceiling = calculate_guard_setting(white, 90, 80, 51)
-    assert 0 < k <= 51
-    assert ceiling == 100                     # ceiling NOT capped — floor was lowered instead
-    assert floor_bri < 90                     # runtime floor dropped well below the configured 90%
-    assert _rendered_total(0, 0, k, floor_bri, ceiling, 51) <= _safe_total(80, 51) + 1e-9
+    k, floor_bri, ceiling = calculate_guard_setting(white, 70, 80, 51, max_dim=10)
+    assert k == 10 and ceiling == 100         # brightness held; scatter capped
+    k5, _, _ = calculate_guard_setting(white, 70, 80, 51, max_dim=5)
+    assert k5 == 5                            # cap is configurable
 
 
-def test_floor_pct_100_lowers_floor_no_divzero():
-    """floor_pct == 100 can't scatter at that floor → runtime-lower the floor (no div-by-zero)."""
+def test_floor_pct_100_no_divzero():
+    """floor_pct == 100 (floor == ceiling) must not divide by zero; still returns a K."""
     white = LightProfile(mode="hsb", hue=0, saturation=0, brightness=100)
     k, floor_bri, ceiling = calculate_guard_setting(white, 100, 80, 51)
-    assert k > 0 and ceiling == 100
-    assert _rendered_total(0, 0, k, floor_bri, ceiling, 51) <= _safe_total(80, 51) + 1e-9
+    assert 0 < k <= 10 and ceiling == 100
 
 
 def test_guard_zero_panels():
@@ -132,11 +118,12 @@ def test_k_ceil_rounding():
 
 @pytest.mark.parametrize("hue,sat,bri", [(0, 0, 80), (0, 0, 100), (40, 20, 100), (20, 70, 100)])
 @pytest.mark.parametrize("floor_pct", [70, 75, 76, 90, 95, 100])
-def test_budget_invariant_always_met(hue, sat, bri, floor_pct):
-    """Whenever the guard returns a setting, total rendered draw must be <= safe_total."""
+def test_guard_caps_dim_count_and_holds_ceiling(hue, sat, bri, floor_pct):
+    """The guard never dims more than max_dim panels and never lowers the ceiling."""
     profile = LightProfile(mode="hsb", hue=hue, saturation=sat, brightness=bri)
     k, floor_bri, ceiling = calculate_guard_setting(profile, floor_pct, 80, 51)
-    assert _rendered_total(hue, sat, k, floor_bri, ceiling, 51) <= _safe_total(80, 51) + 1e-9
+    assert 0 <= k <= 10
+    assert ceiling == bri                     # brightness/saturation held
 
 
 # ---------------------------------------------------------------------------

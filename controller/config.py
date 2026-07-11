@@ -102,12 +102,15 @@ class Config:
 
     # --- Current guard (Phase 1 v2) ---
     current_guard_enabled: bool = True
-    # Flicker-safe aggregate budget: the guard SPARKLES so the total flicker_load
-    # across panels stays <= num_panels*(threshold-5)/100 — dimming K panels while
-    # the rest hold target brightness/saturation. Driver is the saturation-aware
-    # flicker_load (onset ~0.5: pure R/G/B flicker at bri ~50, white at ~30). NOT a
-    # brightness trigger; a HIGHER threshold means LESS sparkle (more flicker).
+    # Flicker trigger: the guard SPARKLES when a colour's saturation-aware
+    # flicker_load exceeds (threshold-5)/100 (onset ~0.5: pure R/G/B flicker at
+    # bri ~50, white at ~30). A HIGHER threshold triggers on fewer colours.
     current_guard_threshold: int = 50
+    # Max panels the guard dims (light scatter). Hardware review: ~10/51 dimmed
+    # holds brightness/saturation with acceptable flicker; more looks over-scattered.
+    # The ceiling always holds target — capping K trades a little residual flicker
+    # for keeping most panels bright.
+    sparkle_max_dim_panels: int = 10
     sparkle_floor_pct: int = 70
     # Per-panel fade-in in 100 ms units (30 = 3 s). Applies only on color
     # change/activation. Must stay well below the cron tick interval (1200 = 2 min).

@@ -119,7 +119,8 @@ def run_sparkle(args, now=None):
 
     sorted_ids = sorted(panel_ids)
     k, floor_bri, ceiling_bri = calculate_guard_setting(
-        profile, floor, config.current_guard_threshold, len(sorted_ids)
+        profile, floor, config.current_guard_threshold, len(sorted_ids),
+        config.sparkle_max_dim_panels,
     )
     if k <= 0:
         # Within budget — no panels would dim in the controller. Dim half at the

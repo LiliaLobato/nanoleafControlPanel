@@ -256,7 +256,8 @@ def run(now: Optional[datetime] = None) -> None:
         sparkle_override = (state.get("party_mode") or {}).get("sparkle_override", {})
         floor_pct = sparkle_override.get("floor_pct", config.sparkle_floor_pct)
         k, floor_bri, ceiling_bri = calculate_guard_setting(
-            effective_color, floor_pct, config.current_guard_threshold, len(panel_ids)
+            effective_color, floor_pct, config.current_guard_threshold, len(panel_ids),
+            config.sparkle_max_dim_panels,
         )
 
         if panel_ids and k > 0:
