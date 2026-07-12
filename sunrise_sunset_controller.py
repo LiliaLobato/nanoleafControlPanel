@@ -21,12 +21,8 @@ import filelock
 from dotenv import load_dotenv
 
 from nanoleaf.color_helper import describe_color
-from nanoleaf.sparkle import (
-    build_sparkle_effect,
-    calculate_guard_setting,
-    max_brightness_within_flicker,
-    select_dim_panels,
-)
+from nanoleaf.sparkle import FLICKER_BUDGET_MARGIN
+from controller.current_guard import evaluate_guard
 from controller.config import load_config
 from controller.dateTime import parse_iso
 from controller.log_setup import setup_logging
@@ -223,98 +219,20 @@ def run(now: Optional[datetime] = None) -> None:
         return
 
     # --- Current guard ---------------------------------------------------
-    # POWER-BASED — no brightness trigger. Every HSB tick we compute the colour's
-    # actual per-panel draw and dim K panels (and, if needed, lower the floor at
-    # runtime) so total current stays within the PSU budget. Warm/low colours are
-    # within budget and skip the guard; bright near-white fires it. The flat
-    # brightness cap is only a last-resort fallback (no panel IDs, or CT mode,
-    # which cannot be expressed per-panel in animData). write_effect with
-    # animType:"static" is firmware-stable for all 51 panels; "custom" is NOT.
-    current_guard_active = None
-    effect_active = False
-    sparkle_effect = None
-    sorted_ids: list[int] = []
-    dim_ids: list[int] = []
-
+    # The flicker current-guard decides whether this tick's colour must SPARKLE
+    # (dim K panels, ceiling holds target) or CAP its brightness to stay under
+    # the lamp's flicker onset. Warm/low colours are within budget and pass
+    # through untouched. Decision logic lives in controller.current_guard; the
+    # apply block below writes it (sparkle via write_effect with animType:"static",
+    # which is firmware-stable for all 51 panels; "custom" is NOT).
     guard_on = config.current_guard_enabled and should_be_on
-
-    if guard_on and effective_color.mode == "hsb":
-        # Panels come from the SAME get_info() as the state read above (via
-        # get_full_state(with_panels=True)) — zero extra device GETs per tick, which
-        # matters because the guard runs on every high-consumption tick. Reconcile
-        # the live set with the cache; on a layout change clear the dim selection so
-        # select_dim_panels re-derives it deterministically (even-spacing, not a
-        # random reshuffle — no flicker).
-        cached_ids = state.get("panel_ids") or []
-        live_ids = light_state.get("panel_ids") or []
-        panel_ids = live_ids or cached_ids
-        if live_ids and set(live_ids) != set(cached_ids):
-            if cached_ids:
-                logger.info(
-                    "current_guard: panel set changed (%d → %d) — resetting dim selection",
-                    len(cached_ids), len(live_ids),
-                )
-                state["sparkle_dim_panels"] = []
-                state["sparkle_last_rotation_at"] = None
-            state["panel_ids"] = live_ids
-
-        sparkle_override = (state.get("party_mode") or {}).get("sparkle_override", {})
-        floor_pct = sparkle_override.get("floor_pct", config.sparkle_floor_pct)
-        k, floor_bri, ceiling_bri = calculate_guard_setting(
-            effective_color, floor_pct, config.current_guard_threshold, len(panel_ids),
-            config.sparkle_max_dim_panels,
-        )
-
-        if panel_ids and k > 0:
-            sorted_ids = sorted(panel_ids)
-            dim_ids = select_dim_panels(state, sorted_ids, k, now, config)
-            sparkle_effect = build_sparkle_effect(
-                sorted_ids, dim_ids, effective_color.hue, effective_color.saturation,
-                floor_bri, ceiling_bri, config.sparkle_transtime,
-            )
-            logger.debug(
-                "current_guard: sparkle K=%d (floor=%d ceiling=%d)", k, floor_bri, ceiling_bri,
-            )
-            current_guard_active = "sparkle"
-        elif panel_ids:
-            # Within budget (K=0) — apply normally, no sparkle, no cap.
-            logger.debug("current_guard: HSB within budget (K=0) — no sparkle, no cap")
-            state["sparkle_effect_hash"] = None
-        else:
-            # No panel IDs — cannot scatter. Cap this colour to its flicker-safe
-            # brightness (cap DOWN only: never raise a dim, within-budget colour).
-            safe_load = (config.current_guard_threshold - 5) / 100.0
-            safe_bri = max_brightness_within_flicker(
-                effective_color.hue, effective_color.saturation, safe_load
-            )
-            if effective_color.brightness > safe_bri:
-                logger.info(
-                    "current_guard: no panel IDs — flicker-capping brightness %d → %d",
-                    effective_color.brightness, safe_bri,
-                )
-                effective_color = dataclasses.replace(effective_color, brightness=safe_bri)
-                current_guard_active = "brightness_cap"
-            state["sparkle_effect_hash"] = None
-    elif guard_on and effective_color.mode == "ct":
-        # CT cannot be expressed per-panel in animData, so it can't sparkle. Treat
-        # CT as worst-case white and cap to the flicker-safe brightness — near-white
-        # flickers above ~bri 30, so this caps lower than the old flat threshold-5.
-        safe_load = (config.current_guard_threshold - 5) / 100.0
-        safe_bri = max_brightness_within_flicker(0, 0, safe_load)
-        if effective_color.brightness > safe_bri:
-            logger.info(
-                "current_guard: CT flicker-capping brightness %d → %d",
-                effective_color.brightness, safe_bri,
-            )
-            effective_color = dataclasses.replace(effective_color, brightness=safe_bri)
-            current_guard_active = "brightness_cap"
-        state["sparkle_effect_hash"] = None
-    else:
-        state["sparkle_effect_hash"] = None
-        if not config.current_guard_enabled:
-            logger.debug("current_guard: disabled")
-        elif not should_be_on:
-            logger.debug("current_guard: skipped — lamp going off")
+    decision = evaluate_guard(effective_color, guard_on, light_state, state, config, now)
+    effective_color = decision.effective_color
+    sparkle_effect = decision.sparkle_effect
+    current_guard_active = decision.guard_active
+    sorted_ids = decision.sorted_ids
+    dim_ids = decision.dim_ids
+    effect_active = False
 
     # --- Apply -----------------------------------------------------------
     if sparkle_effect is not None:
@@ -345,7 +263,7 @@ def run(now: Optional[datetime] = None) -> None:
             # Transient network failures re-raise and are caught above, so this is
             # not a connectivity problem — degrade gracefully to a capped solid
             # colour instead of backing off the lamp for a tick.
-            capped = config.current_guard_threshold - 5
+            capped = config.current_guard_threshold - FLICKER_BUDGET_MARGIN
             logger.warning(
                 "current_guard: write_effect rejected — degrading to capped set_hsb (%d → %d)",
                 effective_color.brightness, capped,

@@ -35,6 +35,21 @@ def hsb_to_rgb(hue: int, sat: int, brightness: int) -> tuple[int, int, int]:
     return round(r * 255), round(g * 255), round(b * 255)
 
 
+# Per-panel flicker_load budget sits this many points below current_guard_threshold.
+# Single source of truth for the "threshold - 5" margin used by both the sparkle
+# K-count (here) and the CT / no-panel-IDs caps in the controller.
+FLICKER_BUDGET_MARGIN = 5
+
+
+def flicker_budget(threshold: int) -> float:
+    """Per-panel ``flicker_load`` budget (0.0-1.0) for a current_guard_threshold.
+
+    The guard sparkles (or caps) when a colour's ``flicker_load`` exceeds this.
+    Sits ``FLICKER_BUDGET_MARGIN`` points below the threshold.
+    """
+    return (threshold - FLICKER_BUDGET_MARGIN) / 100.0
+
+
 def calculate_guard_setting(
     profile: LightProfile,
     floor_pct: int,
@@ -64,7 +79,7 @@ def calculate_guard_setting(
     if load_ceiling <= 0:
         return (0, b, b)
 
-    safe_total = n * (threshold - 5) / 100.0
+    safe_total = n * flicker_budget(threshold)
     if n * load_ceiling <= safe_total:
         return (0, b, b)  # within budget — no guard needed
 
