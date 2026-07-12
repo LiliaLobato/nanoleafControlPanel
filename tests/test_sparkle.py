@@ -554,22 +554,18 @@ def test_cli_party_floor_writes_override(tmp_path, monkeypatch):
     assert state["party_mode"]["sparkle_override"] == {"floor_pct": 30}
 
 
-def test_cli_floor_validation():
-    from nanoleaf_cli._validation import validate_sparkle_floor
-    assert validate_sparkle_floor("0") == 0
-    assert validate_sparkle_floor("100") == 100
-    with pytest.raises(argparse.ArgumentTypeError):
-        validate_sparkle_floor("101")
-    with pytest.raises(argparse.ArgumentTypeError):
-        validate_sparkle_floor("-1")
-
-
-def test_cli_transtime_validation():
-    from nanoleaf_cli._validation import validate_sparkle_transtime
-    assert validate_sparkle_transtime("0") == 0
-    assert validate_sparkle_transtime("30") == 30
-    assert validate_sparkle_transtime("200") == 200
-    with pytest.raises(argparse.ArgumentTypeError):
-        validate_sparkle_transtime("201")
-    with pytest.raises(argparse.ArgumentTypeError):
-        validate_sparkle_transtime("-1")
+@pytest.mark.parametrize(
+    "validator_name, valid, invalid",
+    [
+        ("validate_sparkle_floor",     ["0", "100"],      ["101", "-1"]),  # 0-100
+        ("validate_sparkle_transtime", ["0", "30", "200"], ["201", "-1"]),  # 0-200
+    ],
+)
+def test_cli_range_validators(validator_name, valid, invalid):
+    import nanoleaf_cli._validation as v
+    validator = getattr(v, validator_name)
+    for s in valid:
+        assert validator(s) == int(s)
+    for s in invalid:
+        with pytest.raises(argparse.ArgumentTypeError):
+            validator(s)
