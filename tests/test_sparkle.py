@@ -28,9 +28,9 @@ from nanoleaf.sparkle import (
     max_brightness_within_flicker,
     select_dim_panels,
 )
+from tests.conftest import MockLamp, PANELS_51
 
 TZ = ZoneInfo("America/Los_Angeles")
-PANELS_51 = [i for i in range(1, 53) if i != 6]   # ids 1-52 minus Rhythm (id 6)
 
 
 # ---------------------------------------------------------------------------
@@ -233,71 +233,8 @@ def test_build_sparkle_effect_payload():
 
 
 # ---------------------------------------------------------------------------
-# Controller integration — driven through the real run()
+# Controller integration — driven through the real run() (shared MockLamp)
 # ---------------------------------------------------------------------------
-
-class _MockLamp:
-    DEFAULT_PANEL_IDS = list(PANELS_51)
-
-    def __init__(self, panel_ids=None, panel_ids_raises=False, write_ok=True,
-                 write_raises=None):
-        self._state = {"on": False, "hue": 0, "sat": 0, "brightness": 0,
-                       "ct": 4000, "colorMode": "hs"}
-        self.calls = []
-        self._panel_ids = list(self.DEFAULT_PANEL_IDS if panel_ids is None else panel_ids)
-        self._panel_ids_raises = panel_ids_raises
-        self._write_ok = write_ok
-        self._write_raises = write_raises
-
-    def get_full_state(self, retries=2, retry_delay=10.0, with_panels=False):
-        s = dict(self._state)
-        if with_panels:
-            # Mirrors the real lamp: a missing/unreachable layout yields [].
-            s["panel_ids"] = [] if self._panel_ids_raises else list(self._panel_ids)
-        return s
-
-    def get_panel_ids(self):
-        self.calls.append(("get_panel_ids",))
-        if self._panel_ids_raises:
-            raise RuntimeError("layout unreachable")
-        return list(self._panel_ids)
-
-    def write_effect(self, effect):
-        self.calls.append(("write_effect", effect))
-        if self._write_raises is not None:
-            raise self._write_raises
-        if self._write_ok:
-            self._state.update({"colorMode": "effect", "hue": 0, "sat": 0,
-                                "ct": 1200, "brightness": 20})
-        return self._write_ok
-
-    def set_hsb(self, hue, sat, bri, on=None):
-        self.calls.append(("set_hsb", hue, sat, bri, on))
-        self._state.update({"hue": hue, "sat": sat, "brightness": bri, "colorMode": "hs"})
-        if on is not None:
-            self._state["on"] = on
-        return True
-
-    def set_color_temp_and_brightness(self, ct, bri, on=None):
-        self.calls.append(("set_ct", ct, bri, on))
-        self._state.update({"ct": ct, "brightness": bri, "colorMode": "ct"})
-        if on is not None:
-            self._state["on"] = on
-        return True
-
-    def power_on(self):
-        self.calls.append(("power_on",))
-        self._state["on"] = True
-        return True
-
-    def power_off(self):
-        self.calls.append(("power_off",))
-        self._state["on"] = False
-        return True
-
-    def names(self):
-        return [c[0] for c in self.calls]
-
 
 @pytest.fixture
 def iso_state(tmp_path, monkeypatch):
@@ -340,7 +277,7 @@ def _seed_party(hue=0, sat=0, brightness=90, mode="hsb", color_temp=0, floor=Non
 
 
 def test_hsb_above_threshold_writes_effect(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)   # white → K>0
     ctrl.run(now=now)
@@ -352,7 +289,7 @@ def test_hsb_above_threshold_writes_effect(iso_state, monkeypatch):
 
 
 def test_hsb_within_budget_uses_set_hsb(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=20, sat=70, brightness=30)   # warm + dim → flicker load within budget
     ctrl.run(now=now)
@@ -361,7 +298,7 @@ def test_hsb_within_budget_uses_set_hsb(iso_state, monkeypatch):
 
 
 def test_hsb_warm_k0_uses_set_hsb_no_cap(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=20, sat=70, brightness=30)   # warm + dim → within budget, K=0
     ctrl.run(now=now)
@@ -372,7 +309,7 @@ def test_hsb_warm_k0_uses_set_hsb_no_cap(iso_state, monkeypatch):
 
 
 def test_ct_above_threshold_caps_no_effect(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(mode="ct", color_temp=6000, brightness=90)
     ctrl.run(now=now)
@@ -386,7 +323,7 @@ def test_ct_above_threshold_caps_no_effect(iso_state, monkeypatch):
 
 
 def test_guard_disabled_no_effect(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp, config=Config(current_guard_enabled=False))
     now = _seed_party(hue=0, sat=0, brightness=100)
     ctrl.run(now=now)
@@ -395,7 +332,7 @@ def test_guard_disabled_no_effect(iso_state, monkeypatch):
 
 
 def test_sparkle_path_makes_no_separate_get_panel_ids_call(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
@@ -408,7 +345,7 @@ def test_sparkle_path_makes_no_separate_get_panel_ids_call(iso_state, monkeypatc
 
 
 def test_panel_set_change_updates_cache(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
@@ -421,7 +358,7 @@ def test_panel_set_change_updates_cache(iso_state, monkeypatch):
 
 
 def test_no_panel_ids_falls_back_to_cap(iso_state, monkeypatch):
-    lamp = _MockLamp(panel_ids_raises=True)
+    lamp = MockLamp(panel_ids_raises=True)
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
@@ -432,7 +369,7 @@ def test_no_panel_ids_falls_back_to_cap(iso_state, monkeypatch):
 def test_no_panel_ids_does_not_raise_dim_color(iso_state, monkeypatch):
     # RISK-1: with no panel IDs we cannot sparkle, so cap DOWN only —
     # a within-budget colour (white@20, flicker-safe) must NOT be raised/capped.
-    lamp = _MockLamp(panel_ids_raises=True)
+    lamp = MockLamp(panel_ids_raises=True)
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=20)
     ctrl.run(now=now)
@@ -445,7 +382,7 @@ def test_no_panel_ids_does_not_raise_dim_color(iso_state, monkeypatch):
 def test_write_effect_4xx_degrades_to_cap(iso_state, monkeypatch):
     # write_effect returns False = lamp rejected the payload (4xx) → degrade to a
     # capped solid colour, NO backoff.
-    lamp = _MockLamp(write_ok=False)
+    lamp = MockLamp(write_ok=False)
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
@@ -458,7 +395,7 @@ def test_write_effect_4xx_degrades_to_cap(iso_state, monkeypatch):
 def test_write_effect_connection_error_triggers_backoff(iso_state, monkeypatch):
     # A transient connection failure re-raises → handle_lamp_failure (backoff).
     from nanoleaf.nanoleafLight import NanoleafConnectionError
-    lamp = _MockLamp(write_raises=NanoleafConnectionError("timeout"))
+    lamp = MockLamp(write_raises=NanoleafConnectionError("timeout"))
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
@@ -470,7 +407,7 @@ def test_write_effect_connection_error_triggers_backoff(iso_state, monkeypatch):
 def test_floor_pct_100_lowers_floor_and_sparkles(iso_state, monkeypatch):
     # floor_pct=100 can't scatter at that floor → runtime-lower the floor and
     # sparkle (ceiling stays at target). NOT a flat cap.
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90, floor=100)
     ctrl.run(now=now)
@@ -479,7 +416,7 @@ def test_floor_pct_100_lowers_floor_and_sparkles(iso_state, monkeypatch):
 
 
 def test_skip_guard_unchanged_effect(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)
@@ -490,7 +427,7 @@ def test_skip_guard_unchanged_effect(iso_state, monkeypatch):
 def test_rewrite_forced_after_power_on(iso_state, monkeypatch):
     # RISK-2: if the lamp was OFF, power_on drops the volatile effect, so we must
     # rewrite even when the hash matches and NVRAM still reads colorMode "effect".
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     ctrl.run(now=now)                                   # write #1, lamp on, hash stored
@@ -509,7 +446,7 @@ def test_rewrite_forced_after_power_on(iso_state, monkeypatch):
 def test_guard_skipped_when_should_be_on_false(iso_state, monkeypatch):
     # MINOR-3: a high-power colour that WOULD fire the guard, but the lamp is going
     # off (manual-off during party → should_be_on False) → no sparkle write.
-    lamp = _MockLamp()
+    lamp = MockLamp()
     lamp._state["on"] = False                           # user turned it off
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
@@ -523,7 +460,7 @@ def test_guard_skipped_when_should_be_on_false(iso_state, monkeypatch):
 
 
 def test_party_floor_override_reaches_effect(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=60, floor=30)
     ctrl.run(now=now)
@@ -534,7 +471,7 @@ def test_party_floor_override_reaches_effect(iso_state, monkeypatch):
 
 
 def test_controller_last_tick_at_written(iso_state, monkeypatch):
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=20, sat=70, brightness=40)
     ctrl.run(now=now)
@@ -543,7 +480,7 @@ def test_controller_last_tick_at_written(iso_state, monkeypatch):
 
 def test_controller_last_tick_at_written_during_backoff(iso_state, monkeypatch):
     # Even when the lamp is in backoff (early return), the tick timestamp is set.
-    lamp = _MockLamp()
+    lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
     now = _seed_party(hue=0, sat=0, brightness=90)
     st = load_state()

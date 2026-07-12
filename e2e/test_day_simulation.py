@@ -42,87 +42,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from tests.conftest import MockLamp
+
 FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures"
 LOCAL_TZ  = ZoneInfo("America/Los_Angeles")
 LAT, LON  = 47.6144, -122.1923
-
-
-# ---------------------------------------------------------------------------
-# MockLamp
-# ---------------------------------------------------------------------------
-
-class MockLamp:
-    """Records every lamp API call and reflects the last applied state.
-
-    get_full_state() returns a stable dict so override detection in the
-    controller can compare expected vs actual power across ticks without
-    spurious manual-override signals.
-    """
-
-    # Default 51-panel layout (ids 1-52 minus the Rhythm module at id 6),
-    # matching the real lamp so even-spacing/K-count behave realistically.
-    DEFAULT_PANEL_IDS = [i for i in range(1, 53) if i != 6]
-
-    def __init__(self, panel_ids=None):
-        self._state = {
-            "on": False, "hue": 0, "sat": 0, "brightness": 0,
-            "ct": 4000, "colorMode": "hs",
-        }
-        self.calls: list = []
-        self.panel_ids = list(panel_ids) if panel_ids is not None else list(self.DEFAULT_PANEL_IDS)
-
-    def get_full_state(self, retries=2, retry_delay=10.0, with_panels=False) -> dict:
-        s = dict(self._state)
-        if with_panels:
-            s["panel_ids"] = list(self.panel_ids)
-        return s
-
-    def get_panel_ids(self) -> list:
-        self.calls.append(("get_panel_ids",))
-        return list(self.panel_ids)
-
-    def write_effect(self, effect_data: dict) -> bool:
-        self.calls.append(("write_effect", effect_data))
-        # A live static effect reports colorMode "effect"; GET /state then returns
-        # DEFAULT color fields, not the rendered colors (firmware behaviour).
-        self._state.update({
-            "colorMode": "effect", "hue": 0, "sat": 0, "ct": 1200, "brightness": 20,
-        })
-        return True
-
-    def set_hsb(self, hue: int, sat: int, bri: int, on: bool | None = None) -> bool:
-        self.calls.append(("set_hsb", hue, sat, bri, on))
-        self._state.update({"hue": hue, "sat": sat, "brightness": bri, "colorMode": "hs"})
-        if on is not None:
-            self._state["on"] = on
-        return True
-
-    def set_color_temp_and_brightness(self, ct: int, bri: int, on: bool | None = None) -> bool:
-        self.calls.append(("set_ct", ct, bri, on))
-        self._state.update({"ct": ct, "brightness": bri, "colorMode": "ct"})
-        if on is not None:
-            self._state["on"] = on
-        return True
-
-    def power_on(self) -> bool:
-        self.calls.append(("power_on",))
-        self._state["on"] = True
-        return True
-
-    def power_off(self) -> bool:
-        self.calls.append(("power_off",))
-        self._state["on"] = False
-        return True
-
-    def restore_state(self, state: dict) -> bool:
-        self._state.update(state)
-        return True
-
-    def check_heartbeat(self) -> bool:
-        return True
-
-    def reset(self) -> None:
-        self.calls.clear()
 
 
 # ---------------------------------------------------------------------------
