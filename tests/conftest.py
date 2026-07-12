@@ -141,7 +141,3 @@ def thunderstorm():
     return _make_instance("thunderstorm.json")
 
 
-@pytest.fixture
-def panel_ids_51():
-    """Real-shaped 51-panel layout (see the module-level PANELS_51 constant)."""
-    return list(PANELS_51)

@@ -10,7 +10,6 @@ from nanoleaf.nanoleafLight import (
     NanoleafLight,
     NanoleafAuthError,
     NanoleafConnectionError,
-    NanoleafError,
     NanoleafRequestError,
 )
 

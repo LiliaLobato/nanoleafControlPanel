@@ -1,9 +1,7 @@
 """profile commands — list, get, set, reset."""
 
 from controller.config import (
-    CONFIG_PATH,
     PROFILE_DEFAULTS,
-    LightProfile,
     load_profiles,
     save_config,
 )

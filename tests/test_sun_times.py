@@ -1,10 +1,9 @@
 """Tests for sunrise/sunset datetime methods and adjusted sunset logic."""
 
-import pytest
 from zoneinfo import ZoneInfo
 
 from weather.openWeather import OpenWeatherLight
-from tests.conftest import _load_fixture, _make_instance, LAT, LON
+from tests.conftest import _load_fixture, LAT, LON
 
 _PDT = ZoneInfo("America/Los_Angeles")
 

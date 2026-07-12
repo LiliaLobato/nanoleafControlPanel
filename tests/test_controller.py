@@ -22,10 +22,7 @@ from controller.config import (
     SUNRISE_START_PROFILE,
 )
 from nanoleaf.interpolation import interpolate_profiles, lerp_hue
-from controller.profiles import (
-    calculate_effective_color_profile,
-    calculate_target_profile,
-)
+from controller.profiles import calculate_target_profile
 from controller.dateTime import get_morning_ramp_start, parse_iso
 from controller.state import (
     _empty_state,
@@ -587,8 +584,6 @@ class TestLastAppliedSchema:
 
 class TestIsAnchorTime:
     """_is_anchor_time fires exactly once per anchor window for any cron interval."""
-
-    from weather.weather_cache import _is_anchor_time as _fn
 
     def _now(self, anchor_hour: int, anchor_min: int, offset_min: int) -> datetime:
         total = anchor_hour * 60 + anchor_min + offset_min

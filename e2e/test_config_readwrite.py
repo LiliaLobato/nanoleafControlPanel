@@ -22,18 +22,16 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def tmp_config(tmp_path, monkeypatch):
-    """Redirect CONFIG_PATH to a temp file in every module that imports it
-    (it's imported by-value, so each module needs its own patch) and clear
-    the mtime cache before/after each test.
+    """Redirect CONFIG_PATH to a temp file and clear the mtime cache each test.
+
+    CONFIG_PATH lives in controller.config; load_config/save_config and
+    _config_io.load_raw_config all resolve it via that module at call time, so
+    patching the single controller.config global redirects every reader/writer.
     """
     import controller.config as cfg_mod
-    import nanoleaf_cli.commands.config  as cmd_config
-    import nanoleaf_cli.commands.profile as cmd_profile
-    import nanoleaf_cli.commands.debug   as cmd_debug
 
     tmp_cfg = tmp_path / "config.json"
-    for mod in (cfg_mod, cmd_config, cmd_profile, cmd_debug):
-        monkeypatch.setattr(mod, "CONFIG_PATH", tmp_cfg)
+    monkeypatch.setattr(cfg_mod, "CONFIG_PATH", tmp_cfg)
     cfg_mod._config_cache.clear()
     yield tmp_cfg
     cfg_mod._config_cache.clear()

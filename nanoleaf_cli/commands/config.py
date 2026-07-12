@@ -4,7 +4,7 @@ import sys
 from dataclasses import fields
 from datetime import time
 
-from controller.config import CONFIG_PATH, Config, LightProfile, load_config, save_config
+from controller.config import Config, LightProfile, load_config, save_config
 from nanoleaf.color_helper import describe_color, lookup_hue_range, rgb_to_hsb
 from nanoleaf_cli._config_io import load_raw_config
 from nanoleaf_cli._formatting import confirm_config_set, fmt_config_value, fmt_time, print_error

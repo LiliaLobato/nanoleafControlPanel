@@ -1,7 +1,9 @@
 """effects.py
 
-Shared utilities for Nanoleaf effect builders.
-Imported by nanoleaf/sparkle.py (Phase 1) and Phase 2 effect builders.
+Shared utilities for Nanoleaf effect builders. Retained for Phase 2 (the
+``wheel`` animation) — not yet wired into any caller. Phase 1 sparkle drives
+transTime from the ``sparkle_transtime`` config knob directly and does NOT use
+this module.
 """
 
 

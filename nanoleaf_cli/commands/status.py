@@ -9,7 +9,6 @@ from controller.dateTime import parse_iso
 from controller.phase import calculate_phase
 from controller.state import STATE_PATH, load_state, should_respect_dnd
 from nanoleaf.nanoleafLight import NanoleafLight
-from nanoleaf_cli._formatting import fmt_time
 from weather.weather_cache import reconstruct_cached_weather
 
 
