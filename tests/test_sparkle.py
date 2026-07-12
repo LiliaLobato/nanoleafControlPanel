@@ -26,7 +26,6 @@ from nanoleaf.sparkle import (
     even_spaced,
     hsb_to_rgb,
     max_brightness_within_flicker,
-    power_fraction,
     select_dim_panels,
 )
 
@@ -52,7 +51,7 @@ def _parse_animdata(anim: str):
 
 
 # ---------------------------------------------------------------------------
-# hsb_to_rgb / power_fraction
+# hsb_to_rgb
 # ---------------------------------------------------------------------------
 
 def test_hsb_to_rgb_known_values():
@@ -60,14 +59,6 @@ def test_hsb_to_rgb_known_values():
     assert hsb_to_rgb(120, 100, 100) == (0, 255, 0)
     assert hsb_to_rgb(0, 0, 100) == (255, 255, 255)
     assert hsb_to_rgb(0, 0, 0) == (0, 0, 0)
-
-
-def test_power_fraction():
-    assert power_fraction((255, 255, 255)) == pytest.approx(1.0)
-    assert power_fraction((0, 0, 0)) == 0.0
-    # Warm amber draws far less than white at the same brightness.
-    amber = hsb_to_rgb(20, 70, 90)
-    assert power_fraction(amber) < power_fraction(hsb_to_rgb(0, 0, 90))
 
 
 # ---------------------------------------------------------------------------

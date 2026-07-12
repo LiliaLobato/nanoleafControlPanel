@@ -35,15 +35,6 @@ def hsb_to_rgb(hue: int, sat: int, brightness: int) -> tuple[int, int, int]:
     return round(r * 255), round(g * 255), round(b * 255)
 
 
-def power_fraction(rgb: tuple[int, int, int]) -> float:
-    """Per-panel current draw as a fraction 0.0-1.0, modelled as (R+G+B)/765.
-
-    PWM per channel means average current is proportional to channel value, so
-    warm colours (low green/blue) draw far less than white at the same brightness.
-    """
-    return sum(rgb) / 765.0
-
-
 def calculate_guard_setting(
     profile: LightProfile,
     floor_pct: int,
