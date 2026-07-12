@@ -20,6 +20,7 @@ from nanoleaf_cli.commands.preview import (
     run_profile as preview_profile,
     run_hsb as preview_hsb,
     run_color as preview_color,
+    run_sparkle as preview_sparkle,
 )
 from nanoleaf_cli.commands.party import run as party_run
 from nanoleaf_cli.commands.lamp import (
@@ -32,6 +33,7 @@ from nanoleaf_cli._validation import (
     validate_hue as _validate_hue,
     validate_saturation as _validate_saturation,
     validate_brightness as _validate_brightness,
+    validate_sparkle_floor as _validate_sparkle_floor,
 )
 from nanoleaf_cli.commands.status import run as status_run
 from nanoleaf_cli.commands.error import run as error_run
@@ -163,6 +165,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_prev_color.add_argument("rgb", help="R,G,B values 0-255 (e.g. 255,0,128)")
     p_prev_color.set_defaults(func=preview_color)
 
+    p_prev_sparkle = prev_sub.add_parser(
+        "sparkle",
+        help="preview sparkle scatter effect then revert",
+    )
+    p_prev_sparkle.add_argument("--hue", type=_validate_hue, metavar="H", help="hue 0-359 (default: from last_applied)")
+    p_prev_sparkle.add_argument("--sat", type=_validate_saturation, metavar="S", help="saturation 0-100")
+    p_prev_sparkle.add_argument("--brightness", type=_validate_brightness, metavar="B", help="brightness 0-100")
+    p_prev_sparkle.add_argument("--floor", type=_validate_sparkle_floor, metavar="N", help="floor brightness %% 0-100 (default: config)")
+    p_prev_sparkle.add_argument("--duration", type=int, default=10, metavar="SEC", help="seconds to hold preview (default: 10)")
+    p_prev_sparkle.set_defaults(func=preview_sparkle)
+
     # -------------------------------------------------------------------------
     # party
     # -------------------------------------------------------------------------
@@ -186,6 +199,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_party.add_argument(
         "--fade-duration", type=int, metavar="MIN", dest="fade_duration",
         help="fade window in minutes (implies --fade true)",
+    )
+    p_party.add_argument(
+        "--floor", type=_validate_sparkle_floor, metavar="N",
+        help="sparkle floor brightness %% 0–100; overrides config.sparkle_floor_pct for this session",
     )
     p_party.set_defaults(func=party_run)
 

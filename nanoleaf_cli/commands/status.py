@@ -9,7 +9,6 @@ from controller.dateTime import parse_iso
 from controller.phase import calculate_phase
 from controller.state import STATE_PATH, load_state, should_respect_dnd
 from nanoleaf.nanoleafLight import NanoleafLight
-from nanoleaf_cli._formatting import fmt_time
 from weather.weather_cache import reconstruct_cached_weather
 
 
@@ -86,7 +85,9 @@ def run(args, now=None):
     print("Lamp:")
     if ip and token:
         try:
-            lamp_state = NanoleafLight("nanoleaf", ip, token).get_full_state()
+            # retries=0: interactive CLI must fail fast, not block ~20s on the
+            # controller's get_full_state retry budget when the lamp is unreachable.
+            lamp_state = NanoleafLight("nanoleaf", ip, token).get_full_state(retries=0)
         except Exception:
             lamp_state = None
         if lamp_state:

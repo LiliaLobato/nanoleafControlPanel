@@ -94,6 +94,10 @@ def validate_bool(v: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected true/false/yes/no/1/0, got {v!r}")
 
 
+validate_sparkle_transtime = _int_range(0, 200, "sparkle_transtime")
+validate_sparkle_floor = _int_range(0, 100, "sparkle_floor_pct")
+
+
 def validate_backoff_schedule(v: str) -> list[int]:
     """Accept a JSON array '[5,10,20]' or comma-separated '5,10,20'."""
     v = v.strip()
@@ -188,6 +192,12 @@ _CONFIG_FIELD_VALIDATORS: dict[str, Callable[[str], Any]] = {
     "cron_interval_minutes":      validate_positive_int,
     # Verbose
     "verbose":                    validate_bool,
+    # Current guard / sparkle (Phase 1 v2)
+    "current_guard_enabled":      validate_bool,
+    "current_guard_threshold":    _int_range(0, 100, "current_guard_threshold"),
+    "sparkle_floor_pct":          _int_range(0, 100, "sparkle_floor_pct"),
+    "sparkle_transtime":          _int_range(0, 200, "sparkle_transtime"),
+    "sparkle_rotation_interval":  validate_positive_int,
 }
 
 

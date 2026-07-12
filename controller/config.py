@@ -76,7 +76,7 @@ class Config:
     cloud_threshold: int = 60
 
     # --- Darkness detection ---
-    dark_sun_elevation_deg: float = 20.0
+    dark_sun_elevation_deg: float = 35.0
     dark_cloud_threshold: int = 75
 
     # --- Oscillation protection ---
@@ -90,7 +90,7 @@ class Config:
     party_default_fade_minutes: int = 30
 
     # --- Failure backoff ---
-    backoff_schedule_minutes: list[int] = field(default_factory=lambda: [5, 10, 20, 40, 60])
+    backoff_schedule_minutes: list[int] = field(default_factory=lambda: [1, 2, 5, 10, 20, 40, 60])
 
     # --- Cron tick interval ---
     # Must match the */N in the crontab entry. Controls the anchor-time window
@@ -99,6 +99,26 @@ class Config:
 
     # --- Verbose logging ---
     verbose: bool = False
+
+    # --- Current guard (Phase 1 v2) ---
+    current_guard_enabled: bool = True
+    # Flicker trigger: the guard SPARKLES when a colour's saturation-aware
+    # flicker_load exceeds (threshold-5)/100 (onset ~0.5: pure R/G/B flicker at
+    # bri ~50, white at ~30). A HIGHER threshold triggers on fewer colours.
+    current_guard_threshold: int = 50
+    # Max panels the guard dims (light scatter). Hardware review: ~10/51 dimmed
+    # holds brightness/saturation with acceptable flicker; more looks over-scattered.
+    # The ceiling always holds target — capping K trades a little residual flicker
+    # for keeping most panels bright.
+    sparkle_max_dim_panels: int = 10
+    # Dimmed panels drop to this % of the ceiling. Kept LOW so the few (<=max_dim)
+    # dimmed panels remove enough current to actually reduce flicker; tune on hardware.
+    sparkle_floor_pct: int = 30
+    # Per-panel fade-in in 100 ms units (30 = 3 s). Applies only on color
+    # change/activation. Must stay well below the cron tick interval (1200 = 2 min).
+    sparkle_transtime: int = 30
+    # Cron ticks between random dim-panel reshuffles (wear levelling). 10 = 20 min.
+    sparkle_rotation_interval: int = 10
 
 
 # ---------------------------------------------------------------------------
@@ -115,25 +135,25 @@ class LightProfile:
 
 
 # Sunrise start: warm dim amber (beginning of two-stage morning ramp)
-SUNRISE_START_PROFILE = LightProfile(mode="hsb", hue=20, saturation=70, brightness=5)
+SUNRISE_START_PROFILE = LightProfile(mode="hsb", hue=20, saturation=70, brightness=10)
 
 # Sunrise end / morning ramp stage 1 target: warm bright (end of stage 1)
-SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=50)
+SUNRISE_END_PROFILE = LightProfile(mode="hsb", hue=40, saturation=20, brightness=60)
 
 # Morning: cool blue-white, energizing (stage 2 target — final morning state)
-MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=55)
+MORNING_PROFILE = LightProfile(mode="ct", color_temp=6000, brightness=70)
 
 # Daytime-on (used when outside is dark): warm orange-red, soft
-DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=15, saturation=80, brightness=33)
+DAYTIME_ON_PROFILE = LightProfile(mode="hsb", hue=15, saturation=80, brightness=70)
 
 # Night: deep red, cozy, dim
-NIGHT_PROFILE = LightProfile(mode="hsb", hue=8, saturation=90, brightness=20)
+NIGHT_PROFILE = LightProfile(mode="hsb", hue=8, saturation=90, brightness=50)
 
 # Late-night manual override: pure red, low, visible
-LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=4, saturation=90, brightness=25)
+LATE_NIGHT_PROFILE = LightProfile(mode="hsb", hue=4, saturation=90, brightness=40)
 
 # Default party profile: vivid purple, full brightness
-PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=55)
+PARTY_PROFILE = LightProfile(mode="hsb", hue=280, saturation=90, brightness=80)
 
 # Off target (brightness=0 signals power-off intent to interpolate_profiles)
 OFF_PROFILE = LightProfile(mode="hsb", brightness=0)

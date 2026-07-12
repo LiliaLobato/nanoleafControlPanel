@@ -79,6 +79,18 @@ def _resolve_party_profile(args, default_party: LightProfile) -> LightProfile:
     return replace(default_party, **overrides)
 
 
+def _resolve_sparkle_override(args) -> dict:
+    """Build sparkle_override dict from the --floor arg.
+
+    Returns {"floor_pct": N} if --floor was given, else {} (fall back to config
+    sparkle_floor_pct at runtime).
+    """
+    override = {}
+    if getattr(args, "floor", None) is not None:
+        override["floor_pct"] = int(args.floor)
+    return override
+
+
 def _start(args, now=None):
     config = load_config()
 
@@ -88,14 +100,20 @@ def _start(args, now=None):
     ends_at = _resolve_ends_at(args, config, now)
     fade_minutes = _resolve_fade(args, config)
     party_profile = _resolve_party_profile(args, load_profiles()["PARTY"])
+    sparkle_override = _resolve_sparkle_override(args)
 
     state = load_state()
-    state["party_mode"] = {
+    party_state = {
         "active": True,
         "started_at": now.isoformat(),
         "ends_at": ends_at.isoformat(),
         "fade_minutes": fade_minutes,
         "profile": asdict(party_profile),
     }
+    if sparkle_override:
+        party_state["sparkle_override"] = sparkle_override
+    state["party_mode"] = party_state
     save_state(state)
     confirm_party(party_profile, ends_at, fade_minutes if fade_minutes > 0 else None)
+    if sparkle_override:
+        print(f"  Sparkle override: floor={sparkle_override['floor_pct']}%")
