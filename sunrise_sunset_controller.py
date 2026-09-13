@@ -66,6 +66,9 @@ def run(now: Optional[datetime] = None) -> None:
     setup_logging(config)
 
     state = load_state()
+    # Written unconditionally so every save path (incl. backoff / preview-skip
+    # early returns) records that the cron is alive — Phase 3 staleness model.
+    state["controller_last_tick_at"] = now.isoformat()
 
     logger.debug("─── Run start — %s ───", now.strftime("%H:%M:%S"))
 
@@ -210,18 +213,15 @@ def run(now: Optional[datetime] = None) -> None:
         describe_color(effective_color),
         "ON" if should_be_on else "OFF",
     )
-
     try:
         ok = apply_profile(light, effective_color, should_be_on, light_state)
     except Exception as exc:
         handle_lamp_failure(state, now, config, exc)
         save_state(state)
         return
-
     if not ok:
         handle_lamp_failure(
-            state, now, config,
-            NanoleafConnectionError("apply_profile failed"),
+            state, now, config, NanoleafConnectionError("apply_profile failed"),
         )
         save_state(state)
         return

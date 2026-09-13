@@ -290,6 +290,26 @@ class TestPreviewCommands:
         assert abs(final["brightness"] - orig["brightness"])  <= 5, \
             f"preview color: brightness not reverted to {orig['brightness']}, got {final['brightness']}"
 
+    @pytest.mark.slow
+    def test_preview_sparkle_applies_and_reverts(self, light):
+        """preview sparkle renders the scatter effect on hardware, then reverts to
+        the prior solid colour."""
+        from nanoleaf_cli.commands.preview import run_sparkle
+        light.power_on(); time.sleep(0.5)
+        light.set_hsb(10, 80, 50); time.sleep(1)
+        orig = light.get_full_state()
+
+        # near-white high brightness so the scatter is over budget and renders; short
+        # duration keeps the test fast. run_sparkle reverts to the prior state.
+        run_sparkle(_args(hue=0, sat=0, brightness=90, floor=None, duration=1))
+        time.sleep(0.5)
+
+        final = light.get_full_state()
+        assert abs(final["hue"]        - orig["hue"])        <= 8, \
+            f"preview sparkle: hue not reverted to ~{orig['hue']}, got {final['hue']}"
+        assert abs(final["brightness"] - orig["brightness"])  <= 8, \
+            f"preview sparkle: brightness not reverted to ~{orig['brightness']}, got {final['brightness']}"
+
 
 # ---------------------------------------------------------------------------
 # GROUP 3 — party commands + controller integration

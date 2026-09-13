@@ -9,6 +9,7 @@ https://github.com/MylesMor/nanoleafapi
 
 import json
 import logging
+import time
 from typing import Any, Optional
 
 from nanoleaf.color_helper import rgb_to_hsb
@@ -81,9 +82,13 @@ class NanoleafLight:
         url = f"{self._base_url}/{self.auth_token}{path}"
         try:
             response = requests.request(method, url, **kwargs)
-        except (RequestsConnectionError, Timeout) as exc:
+        except Timeout as exc:
             raise NanoleafConnectionError(
-                f"Connection failed to {self.ip}:{self.port}"
+                f"Timeout connecting to {self.ip}:{self.port}"
+            ) from exc
+        except RequestsConnectionError as exc:
+            raise NanoleafConnectionError(
+                f"Connection refused by {self.ip}:{self.port}"
             ) from exc
         except RequestException as exc:
             raise NanoleafConnectionError(
@@ -94,7 +99,7 @@ class NanoleafLight:
             return response
         if response.status_code in (401, 403):
             raise NanoleafAuthError(f"HTTP {response.status_code}: auth error")
-        raise NanoleafRequestError(f"HTTP {response.status_code}")
+        raise NanoleafRequestError(f"HTTP {response.status_code}: {response.text[:200]}")
 
     # ------------------------------------------------------------------
     # Info
@@ -118,33 +123,58 @@ class NanoleafLight:
         response = self._request("GET", "")
         return json.loads(response.text)
 
-    def get_full_state(self) -> dict[str, Any]:
+    def get_full_state(self, retries: int = 2, retry_delay: float = 10.0,
+                       with_panels: bool = False) -> dict[str, Any]:
         """Return the lamp's current state using a single round-trip.
 
         Extracts the 'state' subfield from get_info() and returns a flat dict:
         {on, hue, sat, brightness, ct, colorMode}
 
+        When `with_panels` is True, also include 'panel_ids' (sorted display-panel
+        IDs from the SAME get_info() response — no extra device GET). A missing or
+        malformed panelLayout yields panel_ids=[] without failing the state read.
+
+        On NanoleafConnectionError, retries up to `retries` times with `retry_delay`
+        seconds between attempts. Auth errors and HTTP errors are not retried.
+
         :returns: dict with current state values, or {} on failure
         """
-        try:
-            info = self.get_info()
-            state = info["state"]
-            return {
-                "on": state["on"]["value"],
-                "hue": state["hue"]["value"],
-                "sat": state["sat"]["value"],
-                "brightness": state["brightness"]["value"],
-                "ct": state["ct"]["value"],
-                "colorMode": state["colorMode"],
-            }
-        except NanoleafAuthError as exc:
-            logger.warning("get_full_state: auth error (%s)", exc)
-            return {}
-        except NanoleafError:
-            return {}
-        except (KeyError, ValueError) as exc:
-            logger.warning("get_full_state: unexpected API response shape: %s", exc)
-            return {}
+        for attempt in range(retries + 1):
+            try:
+                info = self.get_info()
+                state = info["state"]
+                result = {
+                    "on": state["on"]["value"],
+                    "hue": state["hue"]["value"],
+                    "sat": state["sat"]["value"],
+                    "brightness": state["brightness"]["value"],
+                    "ct": state["ct"]["value"],
+                    "colorMode": state["colorMode"],
+                }
+                if with_panels:
+                    try:
+                        result["panel_ids"] = self._panel_ids_from_info(info)
+                    except (KeyError, TypeError):
+                        result["panel_ids"] = []
+                return result
+            except NanoleafAuthError as exc:
+                logger.warning("get_full_state: auth error (%s)", exc)
+                return {}
+            except NanoleafConnectionError:
+                if attempt < retries:
+                    logger.debug(
+                        "get_full_state: attempt %d/%d failed, retrying in %.0fs",
+                        attempt + 1, retries + 1, retry_delay,
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    return {}
+            except NanoleafError:
+                return {}
+            except (KeyError, ValueError) as exc:
+                logger.warning("get_full_state: unexpected API response shape: %s", exc)
+                return {}
+        return {}
 
     # ------------------------------------------------------------------
     # Power
@@ -264,6 +294,69 @@ class NanoleafLight:
         return self.set_hsb(
             snapshot["hue"], snapshot["sat"], snapshot["brightness"], on=on
         )
+
+    # ------------------------------------------------------------------
+    # Panel layout
+    # ------------------------------------------------------------------
+
+    def get_panel_ids(self) -> list[int]:
+        """Return sorted list of display panel IDs from the device layout.
+
+        Reads get_info()['panelLayout']['layout']['positionData'][i]['panelId'].
+        Excludes shapeType 1 (Rhythm controller module) — it is not a display
+        panel and must not appear in animData payloads.
+
+        :raises NanoleafConnectionError: on network failure
+        :raises NanoleafAuthError: on auth failure
+        :raises NanoleafRequestError: on HTTP error
+        :raises KeyError: if the response shape is unexpected
+        """
+        return self._panel_ids_from_info(self.get_info())
+
+    @staticmethod
+    def _panel_ids_from_info(info: dict) -> list[int]:
+        """Sorted display-panel IDs from a get_info() response.
+
+        Excludes shapeType 1 (Rhythm controller module) — it is not a display
+        panel and must not appear in animData payloads.
+        """
+        position_data = info["panelLayout"]["layout"]["positionData"]
+        return sorted(
+            p["panelId"] for p in position_data
+            if p.get("shapeType") != 1  # 1 = Rhythm module, not a display panel
+        )
+
+    # ------------------------------------------------------------------
+    # Effects
+    # ------------------------------------------------------------------
+
+    def write_effect(self, effect_data: dict) -> bool:
+        """PUT /effects with {'write': effect_data}. Returns True on 2xx.
+
+        effect_data must include 'command': 'display' (volatile — runs immediately,
+        no NVRAM write). Never use 'command': 'add'; at one cron tick per 2 min
+        that is ~500 k writes/year and degrades the device's flash storage.
+
+        :returns: True if successful, otherwise False
+        """
+        try:
+            # Large animData payloads (~5 KB for 51 panels) can take the lamp
+            # several seconds to parse; use a generous read timeout.
+            self._request("PUT", "/effects", data=json.dumps({"write": effect_data}),
+                          timeout=(3, 20))
+            return True
+        except NanoleafConnectionError:
+            # Transient network failure (timeout / refused) — re-raise so the
+            # controller backs off and retries on the next tick.
+            raise
+        except NanoleafAuthError as exc:
+            logger.warning("write_effect: auth error (%s)", exc)
+            return False
+        except NanoleafError as exc:
+            # Non-transient (4xx/5xx, e.g. payload rejected) — return False so the
+            # controller degrades to a brightness cap instead of backing off.
+            logger.warning("write_effect: request rejected (%s)", exc)
+            return False
 
     def set_color(
         self,

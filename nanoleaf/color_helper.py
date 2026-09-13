@@ -126,12 +126,6 @@ def lookup_hue_range(hue: int) -> tuple[int, int, str]:
     return lo, hi, name
 
 
-def rgb_to_hue(r: int, g: int, b: int) -> int:
-    """Convert RGB (0–255 each) to a Nanoleaf hue value (0–359)."""
-    h, _, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-    return min(round(h * 360), 359)
-
-
 def rgb_to_hsb(r: int, g: int, b: int) -> tuple[int, int, int]:
     """Convert RGB (0–255 each) to Nanoleaf HSB (hue 0–359, sat 0–100, bri 0–100)."""
     h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)

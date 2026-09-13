@@ -54,6 +54,8 @@ def _empty_state() -> dict:
             "next_retry_at": None,
         },
         "last_error": None,
+        "panel_ids": None,
+        "controller_last_tick_at": None,
     }
 
 
@@ -88,6 +90,8 @@ def load_state() -> dict:
     wfs.setdefault("next_retry_at", None)
 
     state.setdefault("party_mode", {"active": False})
+    state.setdefault("panel_ids", None)
+    state.setdefault("controller_last_tick_at", None)
     return state
 
 

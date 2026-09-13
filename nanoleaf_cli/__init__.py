@@ -1,7 +1,6 @@
 """nanoleaf_cli — CLI tool for the Nanoleaf sunrise/sunset controller."""
 
 import sys
-from typing import Optional
 
 from dotenv import load_dotenv
 

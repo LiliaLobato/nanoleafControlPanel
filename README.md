@@ -17,7 +17,7 @@ Fully automate the Nanoleaf light using cronJobs in a Rasphberry Pi.
 - Control panel to interact with the basic setup (change color, brightness, hue, etc) using an [esp32 cheap yellow display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display).
 
 ## Future features
-- Method to handle power consumption on large nanoleaf setups. The panels at the end of my setup flicker.
+- Method to handle power consumption on large nanoleaf setups. The panels at the end of my setup flicker. (An earlier "current guard" that sparkle-scattered brightness to spread peak current was removed from the controller; the sparkle effect remains as dead code, reachable via `nanoleaf-cli preview sparkle`, in case it's worth revisiting.)
 
 ## Content
 __nanoleafLight__ and __nanoleafMicro__  are sub versions of the wrapper for the Nanoleaf OpenAPI. They provide the very basic functions available. 

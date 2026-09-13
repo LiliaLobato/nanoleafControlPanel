@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from weather.openWeather import OpenWeatherLight
 from tests.conftest import _load_fixture, LAT, LON
 

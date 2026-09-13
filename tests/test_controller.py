@@ -22,10 +22,7 @@ from controller.config import (
     SUNRISE_START_PROFILE,
 )
 from nanoleaf.interpolation import interpolate_profiles, lerp_hue
-from controller.profiles import (
-    calculate_effective_color_profile,
-    calculate_target_profile,
-)
+from controller.profiles import calculate_target_profile
 from controller.dateTime import get_morning_ramp_start, parse_iso
 from controller.state import (
     _empty_state,
@@ -588,8 +585,6 @@ class TestLastAppliedSchema:
 class TestIsAnchorTime:
     """_is_anchor_time fires exactly once per anchor window for any cron interval."""
 
-    from weather.weather_cache import _is_anchor_time as _fn
-
     def _now(self, anchor_hour: int, anchor_min: int, offset_min: int) -> datetime:
         total = anchor_hour * 60 + anchor_min + offset_min
         return datetime(2024, 6, 15, total // 60, total % 60, tzinfo=UTC)
@@ -753,7 +748,8 @@ class TestLampBackoff:
         assert is_lamp_in_backoff(state, dt(14, 0)) is False, \
             "no retry scheduled should NOT be in backoff"
 
-        # First failure: increments counter, records exception type, schedules 5-min retry
+        # First failure: increments counter, records exception type, schedules 1-min retry
+        # (default backoff_schedule_minutes = [1, 2, 5, 10, 20, 40, 60])
         state = empty_state()
         handle_lamp_failure(state, dt(14, 0), DEFAULT_CFG, ConnectionError("unreachable"))
         f = state["lamp_failure_state"]
@@ -762,8 +758,8 @@ class TestLampBackoff:
         assert f["last_failure_type"] == "ConnectionError", \
             f"exception type should be recorded as 'ConnectionError', got {f['last_failure_type']!r}"
         retry_secs = (parse_iso(f["next_retry_at"]) - dt(14, 0)).total_seconds()
-        assert retry_secs == 5 * 60, \
-            f"first failure should schedule a 5-min retry, got {retry_secs / 60:.1f} min"
+        assert retry_secs == 1 * 60, \
+            f"first failure should schedule a 1-min retry, got {retry_secs / 60:.1f} min"
 
         # Success: resets counter and clears retry
         state["lamp_failure_state"]["consecutive_failures"] = 3
@@ -787,10 +783,10 @@ class TestDescribeColor:
             (LightProfile(mode="hsb", brightness=0),                           "off",            None,       "brightness=0 → 'off'"),
             (LightProfile(mode="ct",  color_temp=6000, brightness=100),        "daylight white",  "full",    "CT 6000K full brightness"),
             (LightProfile(mode="ct",  color_temp=2500, brightness=20),         "warm white",      "dim",     "CT 2500K dim"),
-            (NIGHT_PROFILE,                                                     "red",             "dim",     "NIGHT profile"),
+            (NIGHT_PROFILE,                                                     "red",             "moderate", "NIGHT profile"),
             (LightProfile(mode="hsb", hue=280, saturation=90, brightness=100), "purple",          "full",    "party purple"),
             (LightProfile(mode="hsb", hue=120, saturation=5,  brightness=50),  "near white",      None,      "low saturation → near white"),
-            (DAYTIME_ON_PROFILE,                                                "orange",          "dim",     "DAYTIME_ON profile"),
+            (DAYTIME_ON_PROFILE,                                                "orange",          "bright",  "DAYTIME_ON profile"),
         ]
         for profile, expected_color, expected_brightness, label in cases:
             result = describe_color(profile)

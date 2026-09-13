@@ -1,6 +1,6 @@
 """debug commands — on, off."""
 
-from controller.config import CONFIG_PATH, save_config
+from controller.config import save_config
 from nanoleaf_cli._config_io import load_raw_config
 
 

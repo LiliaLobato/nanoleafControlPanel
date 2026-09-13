@@ -492,12 +492,28 @@ class TestPartyCommand:
 # Status command
 # ---------------------------------------------------------------------------
 
+class _FakeStatusLamp:
+    """Fast stand-in for NanoleafLight in status tests — records get_full_state's
+    retries kwarg and returns {} (unreachable) instantly, so tests never hit the
+    network or the retry budget."""
+    last_retries = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get_full_state(self, retries=2, retry_delay=10.0, with_panels=False):
+        _FakeStatusLamp.last_retries = retries
+        return {}
+
+
 class TestStatusCommand:
     def test_output_structure(self, tmp_config, tmp_state, monkeypatch, capsys):
         """Status shows phase + time + weather placeholder; verbose adds file paths."""
         import controller.state as _state
         monkeypatch.setattr(_state, "STATE_DIR", tmp_state.parent)
         monkeypatch.setattr(_state, "STATE_PATH", tmp_state)
+        import nanoleaf_cli.commands.status as _status
+        monkeypatch.setattr(_status, "NanoleafLight", _FakeStatusLamp)
 
         from nanoleaf_cli.commands.status import run
 
@@ -516,6 +532,8 @@ class TestStatusCommand:
         import controller.state as _state
         monkeypatch.setattr(_state, "STATE_DIR", tmp_state.parent)
         monkeypatch.setattr(_state, "STATE_PATH", tmp_state)
+        import nanoleaf_cli.commands.status as _status
+        monkeypatch.setattr(_status, "NanoleafLight", _FakeStatusLamp)
 
         state = {
             **_state._empty_state(),
@@ -532,6 +550,23 @@ class TestStatusCommand:
         out = capsys.readouterr().out
         assert "NanoleafConnectionError" in out or "Connection failed" in out, \
             f"status should surface last_error, got {out!r}"
+
+    def test_status_uses_retries_zero_fast_fail(self, tmp_config, tmp_state, monkeypatch):
+        """CLI status must call get_full_state(retries=0) so it fails fast instead
+        of blocking on the controller's ~20s retry budget when the lamp is down."""
+        import controller.state as _state
+        monkeypatch.setattr(_state, "STATE_DIR", tmp_state.parent)
+        monkeypatch.setattr(_state, "STATE_PATH", tmp_state)
+        monkeypatch.setenv("NANOLEAF_IP_ADDRESS", "10.0.0.141")
+        monkeypatch.setenv("NANOLEAF_AUTH_TOKEN", "tok")
+        import nanoleaf_cli.commands.status as _status
+        _FakeStatusLamp.last_retries = None
+        monkeypatch.setattr(_status, "NanoleafLight", _FakeStatusLamp)
+
+        from nanoleaf_cli.commands.status import run
+        run(ns(verbose=False), now=dt(14, 0))
+        assert _FakeStatusLamp.last_retries == 0, \
+            "CLI status must call get_full_state(retries=0) for fast-fail"
 
 
 # ---------------------------------------------------------------------------

@@ -22,18 +22,16 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def tmp_config(tmp_path, monkeypatch):
-    """Redirect CONFIG_PATH to a temp file in every module that imports it
-    (it's imported by-value, so each module needs its own patch) and clear
-    the mtime cache before/after each test.
+    """Redirect CONFIG_PATH to a temp file and clear the mtime cache each test.
+
+    CONFIG_PATH lives in controller.config; load_config/save_config and
+    _config_io.load_raw_config all resolve it via that module at call time, so
+    patching the single controller.config global redirects every reader/writer.
     """
     import controller.config as cfg_mod
-    import nanoleaf_cli.commands.config  as cmd_config
-    import nanoleaf_cli.commands.profile as cmd_profile
-    import nanoleaf_cli.commands.debug   as cmd_debug
 
     tmp_cfg = tmp_path / "config.json"
-    for mod in (cfg_mod, cmd_config, cmd_profile, cmd_debug):
-        monkeypatch.setattr(mod, "CONFIG_PATH", tmp_cfg)
+    monkeypatch.setattr(cfg_mod, "CONFIG_PATH", tmp_cfg)
     cfg_mod._config_cache.clear()
     yield tmp_cfg
     cfg_mod._config_cache.clear()
@@ -181,8 +179,8 @@ class TestConfigScalarFields:
         assert abs(load_config().dark_sun_elevation_deg - 18.5) < 0.01, \
             "dark_sun_elevation_deg should be 18.5 after set"
         _reset("dark_sun_elevation_deg")
-        assert abs(load_config().dark_sun_elevation_deg - 20.0) < 0.01, \
-            "dark_sun_elevation_deg should be default 20.0 after reset"
+        assert abs(load_config().dark_sun_elevation_deg - 35.0) < 0.01, \
+            "dark_sun_elevation_deg should be default 35.0 after reset"
 
     def test_verbose_true_false_and_aliases(self):
         from controller.config import load_config
@@ -223,8 +221,8 @@ class TestConfigScalarFields:
 
         # reset
         _reset("backoff_schedule_minutes")
-        assert load_config().backoff_schedule_minutes == [5, 10, 20, 40, 60], \
-            "After reset, backoff_schedule_minutes should be default [5, 10, 20, 40, 60]"
+        assert load_config().backoff_schedule_minutes == [1, 2, 5, 10, 20, 40, 60], \
+            "After reset, backoff_schedule_minutes should be default [1, 2, 5, 10, 20, 40, 60]"
 
 
 class TestConfigListAndResetAll:

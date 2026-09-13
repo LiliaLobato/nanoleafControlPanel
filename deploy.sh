@@ -120,6 +120,42 @@ else
     echo "        $CRON_ENTRY"
 fi
 
+# 5b. Bound the cron catch-all log (cron.log) via logrotate.
+# The app log (nanoleaf.log) is already rotated in-process by RotatingFileHandler
+# (5 MB × 5). cron.log only holds pre-logging crashes plus a duplicate of the
+# WARNING+ stderr mirror, but without rotation it grows forever. copytruncate
+# keeps cron's open ">>" file descriptor valid across a rotation.
+echo "      bounding cron.log..."
+LOGROTATE_CONF="/etc/logrotate.d/nanoleafControlPanel"
+render_logrotate() {
+    cat <<EOF
+$STATE_DIR/cron.log {
+    weekly
+    rotate 4
+    size 5M
+    missingok
+    notifempty
+    compress
+    copytruncate
+}
+EOF
+}
+if command -v logrotate &>/dev/null && [ -d /etc/logrotate.d ]; then
+    if $DRY_RUN; then
+        echo "  [dry-run] install $LOGROTATE_CONF"
+    elif render_logrotate | sudo tee "$LOGROTATE_CONF" >/dev/null 2>&1; then
+        echo "      installed $LOGROTATE_CONF (weekly, keep 4, 5M, compressed)"
+    else
+        echo "      WARNING: could not write $LOGROTATE_CONF (needs sudo) — install manually:"
+        echo "        sudo tee $LOGROTATE_CONF <<'CONF'"
+        render_logrotate | sed 's/^/        /'
+        echo "        CONF"
+    fi
+else
+    echo "      NOTE: logrotate not available — $STATE_DIR/cron.log will grow unbounded."
+    echo "            Install logrotate (recommended) or rotate that file another way."
+fi
+
 # 6. Set file permissions
 echo "[6/7] Setting permissions..."
 if [ -f "$REPO_DIR/.env" ]; then
