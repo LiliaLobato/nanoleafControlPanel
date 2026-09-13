@@ -1,16 +1,15 @@
 """tests/test_sparkle.py
 
-Tests for the static (animType:"static") sparkle current guard:
-  - pure functions in nanoleaf/sparkle.py (K-count, even-spacing, two-mode
-    selection, animData shape, payload)
-  - the re-wired controller guard, driven through the real run()
-  - manual-recolor (P1-7) override detection
-  - CLI validators / party --floor override
+Tests for the retained sparkle scatter effect in nanoleaf/sparkle.py.
+
+The live current-guard was removed; sparkle.py is kept as reusable (currently
+dead) code, reachable via `nanoleaf-cli preview sparkle`. These cover its pure
+functions (K-count, even-spacing, two-mode selection, animData shape, payload)
+plus the still-used CLI range validators. A couple of general run() timestamp
+checks ride on the shared MockLamp wiring.
 """
 
 import argparse
-import json
-import types
 from datetime import datetime, timedelta
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -18,14 +17,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from controller.config import Config, LightProfile
-from controller.state import _empty_state, detect_manual_override, load_state, save_state
+from controller.state import _empty_state, load_state, save_state
 from nanoleaf.sparkle import (
     build_sparkle_animdata,
     build_sparkle_effect,
     calculate_guard_setting,
     even_spaced,
     hsb_to_rgb,
-    max_brightness_within_flicker,
     select_dim_panels,
 )
 from tests.conftest import MockLamp, PANELS_51
@@ -233,7 +231,7 @@ def test_build_sparkle_effect_payload():
 
 
 # ---------------------------------------------------------------------------
-# Controller integration — driven through the real run() (shared MockLamp)
+# run() tick-timestamp behavior (general; uses the shared MockLamp wiring)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -258,10 +256,10 @@ def _wire(monkeypatch, lamp, config=None):
     return ctrl
 
 
-def _seed_party(hue=0, sat=0, brightness=90, mode="hsb", color_temp=0, floor=None):
+def _seed_party(hue=0, sat=0, brightness=90, mode="hsb", color_temp=0):
     now = _now()
     st = _empty_state()
-    pm = {
+    st["party_mode"] = {
         "active": True,
         "started_at": now.isoformat(),
         "ends_at": (now + timedelta(hours=2)).isoformat(),
@@ -269,205 +267,8 @@ def _seed_party(hue=0, sat=0, brightness=90, mode="hsb", color_temp=0, floor=Non
         "profile": {"mode": mode, "hue": hue, "saturation": sat,
                     "brightness": brightness, "color_temp": color_temp},
     }
-    if floor is not None:
-        pm["sparkle_override"] = {"floor_pct": floor}
-    st["party_mode"] = pm
     save_state(st)
     return now
-
-
-def test_hsb_above_threshold_writes_effect(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)   # white → K>0
-    ctrl.run(now=now)
-    assert "write_effect" in lamp.names()
-    assert "set_hsb" not in lamp.names()
-    st = load_state()
-    assert st["last_applied"]["current_guard_active"] == "sparkle"
-    assert st["last_applied"]["effect_active"] is True
-
-
-def test_hsb_within_budget_uses_set_hsb(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=20, sat=70, brightness=30)   # warm + dim → flicker load within budget
-    ctrl.run(now=now)
-    assert "set_hsb" in lamp.names()
-    assert "write_effect" not in lamp.names()
-
-
-def test_hsb_warm_k0_uses_set_hsb_no_cap(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=20, sat=70, brightness=30)   # warm + dim → within budget, K=0
-    ctrl.run(now=now)
-    assert "write_effect" not in lamp.names()
-    set_calls = [c for c in lamp.calls if c[0] == "set_hsb"]
-    assert set_calls and set_calls[0][3] == 30          # not capped
-    assert load_state()["last_applied"].get("current_guard_active") is None
-
-
-def test_ct_above_threshold_caps_no_effect(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(mode="ct", color_temp=6000, brightness=90)
-    ctrl.run(now=now)
-    assert "write_effect" not in lamp.names()
-    ct_calls = [c for c in lamp.calls if c[0] == "set_ct"]
-    # CT is flicker-capped as worst-case white (near-white flickers above ~bri 26).
-    safe_load = (Config().current_guard_threshold - 5) / 100.0
-    expected_cap = max_brightness_within_flicker(0, 0, safe_load)
-    assert ct_calls and ct_calls[0][2] == expected_cap
-    assert load_state()["last_applied"]["current_guard_active"] == "brightness_cap"
-
-
-def test_guard_disabled_no_effect(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp, config=Config(current_guard_enabled=False))
-    now = _seed_party(hue=0, sat=0, brightness=100)
-    ctrl.run(now=now)
-    assert "write_effect" not in lamp.names()
-    assert "set_hsb" in lamp.names()
-
-
-def test_sparkle_path_makes_no_separate_get_panel_ids_call(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
-    ctrl.run(now=now)
-    ctrl.run(now=now + timedelta(minutes=2))
-    # Panels come from get_full_state(with_panels=True) — the run() path must make
-    # ZERO separate get_panel_ids device GETs (it fires on every high-consumption
-    # tick, so a second GET per tick would be unacceptable).
-    assert lamp.names().count("get_panel_ids") == 0
-    assert load_state()["panel_ids"] == PANELS_51
-
-
-def test_panel_set_change_updates_cache(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
-    ctrl.run(now=now)
-    assert load_state()["panel_ids"] == PANELS_51
-    lamp._panel_ids = PANELS_51[:-1]                     # a tile removed
-    ctrl.run(now=now + timedelta(minutes=2))
-    st = load_state()
-    assert st["panel_ids"] == PANELS_51[:-1]             # cache refreshed
-    assert set(st["sparkle_dim_panels"]).issubset(set(PANELS_51[:-1]))   # no stale IDs
-
-
-def test_no_panel_ids_falls_back_to_cap(iso_state, monkeypatch):
-    lamp = MockLamp(panel_ids_raises=True)
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
-    ctrl.run(now=now)
-    assert "write_effect" not in lamp.names()
-    assert load_state()["last_applied"]["current_guard_active"] == "brightness_cap"
-
-
-def test_no_panel_ids_does_not_raise_dim_color(iso_state, monkeypatch):
-    # RISK-1: with no panel IDs we cannot sparkle, so cap DOWN only —
-    # a within-budget colour (white@20, flicker-safe) must NOT be raised/capped.
-    lamp = MockLamp(panel_ids_raises=True)
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=20)
-    ctrl.run(now=now)
-    st = load_state()
-    assert "write_effect" not in lamp.names()
-    assert st["last_applied"]["profile"]["brightness"] == 20           # within budget, untouched
-    assert st["last_applied"].get("current_guard_active") is None      # not capped
-
-
-def test_write_effect_4xx_degrades_to_cap(iso_state, monkeypatch):
-    # write_effect returns False = lamp rejected the payload (4xx) → degrade to a
-    # capped solid colour, NO backoff.
-    lamp = MockLamp(write_ok=False)
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
-    ctrl.run(now=now)
-    st = load_state()
-    assert st["lamp_failure_state"]["consecutive_failures"] == 0
-    assert st["last_applied"]["current_guard_active"] == "brightness_cap"
-    assert "set_hsb" in lamp.names()
-
-
-def test_write_effect_connection_error_triggers_backoff(iso_state, monkeypatch):
-    # A transient connection failure re-raises → handle_lamp_failure (backoff).
-    from nanoleaf.nanoleafLight import NanoleafConnectionError
-    lamp = MockLamp(write_raises=NanoleafConnectionError("timeout"))
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
-    ctrl.run(now=now)
-    st = load_state()
-    assert st["lamp_failure_state"]["consecutive_failures"] == 1
-    assert st["lamp_failure_state"]["next_retry_at"] is not None
-
-
-def test_floor_pct_100_lowers_floor_and_sparkles(iso_state, monkeypatch):
-    # floor_pct=100 can't scatter at that floor → runtime-lower the floor and
-    # sparkle (ceiling stays at target). NOT a flat cap.
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90, floor=100)
-    ctrl.run(now=now)
-    assert "write_effect" in lamp.names()
-    assert load_state()["last_applied"]["current_guard_active"] == "sparkle"
-
-
-def test_skip_guard_unchanged_effect(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
-    ctrl.run(now=now)
-    ctrl.run(now=now + timedelta(minutes=2))            # identical effect, lamp ON
-    assert lamp.names().count("write_effect") == 1      # second tick skipped
-
-
-def test_rewrite_forced_after_power_on(iso_state, monkeypatch):
-    # RISK-2: if the lamp was OFF, power_on drops the volatile effect, so we must
-    # rewrite even when the hash matches and NVRAM still reads colorMode "effect".
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
-    ctrl.run(now=now)                                   # write #1, lamp on, hash stored
-    assert lamp.names().count("write_effect") == 1
-    # Lamp turned off (volatile effect lost) without tripping manual_off:
-    # expected power already False, NVRAM still reports "effect".
-    st = load_state()
-    st["last_applied"]["power"] = False
-    save_state(st)
-    lamp._state["on"] = False
-    lamp._state["colorMode"] = "effect"
-    ctrl.run(now=now + timedelta(minutes=2))
-    assert lamp.names().count("write_effect") == 2      # forced rewrite, not skipped
-
-
-def test_guard_skipped_when_should_be_on_false(iso_state, monkeypatch):
-    # MINOR-3: a high-power colour that WOULD fire the guard, but the lamp is going
-    # off (manual-off during party → should_be_on False) → no sparkle write.
-    lamp = MockLamp()
-    lamp._state["on"] = False                           # user turned it off
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
-    st = load_state()
-    st["last_applied"] = {"power": True, "profile": {}, "phase": "party_mode",
-                          "timestamp": now.isoformat()}
-    save_state(st)
-    ctrl.run(now=now)
-    assert "write_effect" not in lamp.names()
-    assert load_state()["last_applied"].get("current_guard_active") is None
-
-
-def test_party_floor_override_reaches_effect(iso_state, monkeypatch):
-    lamp = MockLamp()
-    ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=60, floor=30)
-    ctrl.run(now=now)
-    effect = next(c[1] for c in lamp.calls if c[0] == "write_effect")
-    _, panels = _parse_animdata(effect["animData"])
-    floor_rgb = hsb_to_rgb(0, 0, int(60 * 30 / 100))  # floor at 30% (impl uses int())
-    assert any((r, g, b) == floor_rgb for _, _, r, g, b, _, _ in panels)
 
 
 def test_controller_last_tick_at_written(iso_state, monkeypatch):
@@ -482,7 +283,7 @@ def test_controller_last_tick_at_written_during_backoff(iso_state, monkeypatch):
     # Even when the lamp is in backoff (early return), the tick timestamp is set.
     lamp = MockLamp()
     ctrl = _wire(monkeypatch, lamp)
-    now = _seed_party(hue=0, sat=0, brightness=90)
+    now = _seed_party(hue=20, sat=70, brightness=40)
     st = load_state()
     st["lamp_failure_state"] = {
         "consecutive_failures": 2,
@@ -492,67 +293,13 @@ def test_controller_last_tick_at_written_during_backoff(iso_state, monkeypatch):
     }
     save_state(st)
     ctrl.run(now=now)
-    st2 = load_state()
-    assert st2["controller_last_tick_at"] == now.isoformat()
-    assert "write_effect" not in lamp.names()   # backoff → no lamp write
+    assert load_state()["controller_last_tick_at"] == now.isoformat()
+    assert "set_hsb" not in lamp.names()   # backoff → no lamp write
 
 
 # ---------------------------------------------------------------------------
-# P1-7 manual-recolor override detection
+# CLI — sparkle range validators (still used by `preview sparkle`)
 # ---------------------------------------------------------------------------
-
-def _last_applied(effect=True):
-    return {"power": True, "effect_active": effect,
-            "timestamp": _now().isoformat()}
-
-
-def test_recolor_detected_when_colormode_leaves_effect():
-    light_state = {"on": True, "colorMode": "hs"}
-    assert detect_manual_override(light_state, _last_applied(), "party_mode", now=_now()) == "manual_recolor"
-
-
-def test_no_recolor_while_effect_running():
-    light_state = {"on": True, "colorMode": "effect"}
-    assert detect_manual_override(light_state, _last_applied(), "party_mode", now=_now()) == "none"
-
-
-def test_no_recolor_when_last_tick_was_not_effect():
-    light_state = {"on": True, "colorMode": "hs"}
-    assert detect_manual_override(light_state, _last_applied(effect=False), "party_mode", now=_now()) == "none"
-
-
-def test_manual_off_during_effect():
-    light_state = {"on": False, "colorMode": "effect"}
-    assert detect_manual_override(light_state, _last_applied(), "night_ramp", now=_now()) == "manual_off"
-
-
-def test_stale_last_applied_suppresses_recolor():
-    stale = {"power": True, "effect_active": True,
-             "timestamp": (_now() - timedelta(minutes=45)).isoformat()}
-    light_state = {"on": True, "colorMode": "hs"}
-    assert detect_manual_override(light_state, stale, "party_mode", now=_now()) == "none"
-
-
-# ---------------------------------------------------------------------------
-# CLI — party --floor and validators
-# ---------------------------------------------------------------------------
-
-def test_cli_party_floor_writes_override(tmp_path, monkeypatch):
-    state_path = tmp_path / "state.json"
-    monkeypatch.setattr("controller.state.STATE_PATH", state_path)
-    monkeypatch.setattr("controller.state.STATE_DIR", tmp_path)
-
-    from nanoleaf_cli.commands.party import _start
-    args = types.SimpleNamespace(
-        floor=30, hue=None, sat=None, brightness=None, color=None,
-        until=None, fade=None, fade_duration=None,
-    )
-    with patch("nanoleaf_cli.commands.party.confirm_party"):
-        _start(args)
-
-    state = json.loads(state_path.read_text())
-    assert state["party_mode"]["sparkle_override"] == {"floor_pct": 30}
-
 
 @pytest.mark.parametrize(
     "validator_name, valid, invalid",

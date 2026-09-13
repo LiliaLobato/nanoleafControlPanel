@@ -20,11 +20,10 @@ PANELS_51 = [i for i in range(1, 53) if i != 6]
 
 
 class MockLamp:
-    """In-memory Nanoleaf stand-in shared by the sparkle tests and the day-sim e2e.
+    """In-memory Nanoleaf stand-in shared by the unit tests and the day-sim e2e.
 
     Records every lamp API call in ``calls`` and reflects the last applied state
-    via ``get_full_state``. Optional constructor flags inject the failures the
-    guard's degrade/backoff paths need:
+    via ``get_full_state``. Optional constructor flags:
 
       panel_ids        — override the panel layout (default: PANELS_51)
       panel_ids_raises — get_panel_ids() raises; get_full_state reports [] panels

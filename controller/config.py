@@ -100,16 +100,15 @@ class Config:
     # --- Verbose logging ---
     verbose: bool = False
 
-    # --- Current guard (Phase 1 v2) ---
-    current_guard_enabled: bool = True
-    # Flicker trigger: the guard SPARKLES when a colour's saturation-aware
-    # flicker_load exceeds (threshold-5)/100 (onset ~0.5: pure R/G/B flicker at
-    # bri ~50, white at ~30). A HIGHER threshold triggers on fewer colours.
+    # --- Sparkle effect (dead code; reused only by `preview sparkle`) ---
+    # The live current-guard was removed; these knobs now only parametrize the
+    # retained sparkle scatter effect in nanoleaf/sparkle.py (see `preview sparkle`).
+    # Flicker budget: sparkle dims panels whose saturation-aware flicker_load
+    # exceeds (threshold-5)/100 (onset ~0.5: pure R/G/B flicker at bri ~50, white
+    # at ~30). A HIGHER threshold dims on fewer colours.
     current_guard_threshold: int = 50
-    # Max panels the guard dims (light scatter). Hardware review: ~10/51 dimmed
+    # Max panels the effect dims (light scatter). Hardware review: ~10/51 dimmed
     # holds brightness/saturation with acceptable flicker; more looks over-scattered.
-    # The ceiling always holds target — capping K trades a little residual flicker
-    # for keeping most panels bright.
     sparkle_max_dim_panels: int = 10
     # Dimmed panels drop to this % of the ceiling. Kept LOW so the few (<=max_dim)
     # dimmed panels remove enough current to actually reduce flicker; tune on hardware.

@@ -136,20 +136,13 @@ def _ticks(start_h: int, start_m: int, end_h: int, end_m: int, step: int = 2) ->
     return result
 
 
-def _wire(monkeypatch, lamp, weather, guard=True):
-    """Patch the controller to use mock lamp and injected weather; return ctrl module.
-
-    guard=False disables the flicker current-guard so ramp tests can verify the
-    raw schedule interpolation without the guard sparkling/capping brightness.
-    """
+def _wire(monkeypatch, lamp, weather):
+    """Patch the controller to use mock lamp and injected weather; return ctrl module."""
     import sunrise_sunset_controller as ctrl
     monkeypatch.setattr(ctrl, "NanoleafLight", lambda *_: lamp)
     monkeypatch.setattr(ctrl, "get_weather",   lambda *_: weather)
     monkeypatch.setenv("NANOLEAF_IP_ADDRESS",  "mock")
     monkeypatch.setenv("NANOLEAF_AUTH_TOKEN",  "mock")
-    if not guard:
-        from controller.config import Config
-        monkeypatch.setattr(ctrl, "load_config", lambda: Config(current_guard_enabled=False))
     return ctrl
 
 
@@ -190,17 +183,6 @@ class TestDaySimulation:
         assert phases_seen >= expected, \
             f"Missing phases after full day: {expected - phases_seen}"
 
-    def test_sparkle_fires_on_bright_default_profiles(self, monkeypatch, mock_lamp, fixed_weather):
-        """The flicker guard IS engaged by the default schedule: the bright daytime/
-        evening profiles exceed the flicker budget, so the guard writes sparkle
-        effects (dimming K panels while the ceiling holds target) across a day."""
-        ctrl = _wire(monkeypatch, mock_lamp, fixed_weather)
-        for tick in _ticks(0, 0, 23, 58):
-            ctrl.run(now=tick)
-        effect_calls = [c for c in mock_lamp.calls if c[0] == "write_effect"]
-        assert effect_calls, \
-            "flicker guard should sparkle the bright default profiles, but write_effect was never called"
-
     def test_phase_transitions_correct_via_run(self, monkeypatch, mock_lamp, fixed_weather):
         """Phase and power at 7 timestamps verified end-to-end through run() + last_applied.
 
@@ -236,7 +218,7 @@ class TestDaySimulation:
         Two-stage ramp: stage 1 HSB 5→50, stage 2 cross-mode CT 50→55.
         The cross-mode snap keeps brightness monotonic at the boundary.
         """
-        ctrl = _wire(monkeypatch, mock_lamp, fixed_weather, guard=False)
+        ctrl = _wire(monkeypatch, mock_lamp, fixed_weather)
 
         brightnesses = []
         for tick in _ticks(6, 0, 6, 58):
@@ -279,7 +261,7 @@ class TestDaySimulation:
 
     def test_night_ramp_brightness_decreases(self, monkeypatch, mock_lamp, fixed_weather):
         """Brightness ramps down from DAYTIME_ON (70) to NIGHT (50) during 21:00→21:58."""
-        ctrl = _wire(monkeypatch, mock_lamp, fixed_weather, guard=False)
+        ctrl = _wire(monkeypatch, mock_lamp, fixed_weather)
 
         # Turn lamp on via evening_ramp so it's already ON when night_ramp starts.
         ctrl.run(now=_at(20, 0))
@@ -315,7 +297,7 @@ class TestDaySimulation:
         At 23:00 (off phase): target_profile=None → power becomes False.
         """
         import controller.state as state_mod
-        ctrl = _wire(monkeypatch, mock_lamp, fixed_weather, guard=False)
+        ctrl = _wire(monkeypatch, mock_lamp, fixed_weather)
 
         # Prime: run through night_ramp so lamp is ON at 22:00.
         ctrl.run(now=_at(21, 0))

@@ -200,10 +200,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--fade-duration", type=int, metavar="MIN", dest="fade_duration",
         help="fade window in minutes (implies --fade true)",
     )
-    p_party.add_argument(
-        "--floor", type=_validate_sparkle_floor, metavar="N",
-        help="sparkle floor brightness %% 0–100; overrides config.sparkle_floor_pct for this session",
-    )
     p_party.set_defaults(func=party_run)
 
     # -------------------------------------------------------------------------

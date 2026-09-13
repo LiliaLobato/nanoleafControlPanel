@@ -192,8 +192,7 @@ _CONFIG_FIELD_VALIDATORS: dict[str, Callable[[str], Any]] = {
     "cron_interval_minutes":      validate_positive_int,
     # Verbose
     "verbose":                    validate_bool,
-    # Current guard / sparkle (Phase 1 v2)
-    "current_guard_enabled":      validate_bool,
+    # Sparkle effect knobs (current-guard removed; reused by `preview sparkle`)
     "current_guard_threshold":    _int_range(0, 100, "current_guard_threshold"),
     "sparkle_floor_pct":          _int_range(0, 100, "sparkle_floor_pct"),
     "sparkle_transtime":          _int_range(0, 200, "sparkle_transtime"),
